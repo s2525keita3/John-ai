@@ -28,13 +28,13 @@
 
 ```bash
 cd 本部経費処理アプリ
-pip install -r requirements.txt
+pip install -r requirements-local.txt
 streamlit run app.py
 # 同一仕様の別エントリ（halka_AI 用）:
 # streamlit run halka_AI.py
 ```
 
-**横浜信金スキャンPDF（OCR）:** `pip install -r requirements.txt` で **pytesseract** が入ります。**Tesseract 本体**は別途 PATH に必要です（未導入だと EasyOCR にフォールバック）。
+**横浜信金スキャンPDF（OCR）:** `pip install -r requirements-local.txt` で **pytesseract** が入ります。**Tesseract 本体**は別途 PATH に必要です（未導入だと EasyOCR にフォールバック）。
 
 - **Windows（推奨）:** `winget install UB-Mannheim.TesseractOCR`  
   インストール時に **Additional language data** で日本語（Japanese）を含めるか、後から `tessdata/jpn.traineddata` を配置してください。

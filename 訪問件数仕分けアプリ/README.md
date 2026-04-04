@@ -24,7 +24,7 @@
 
 ```bash
 cd 訪問件数仕分けアプリ
-pip install -r requirements.txt
+pip install -r requirements-local.txt
 streamlit run app.py
 ```
 

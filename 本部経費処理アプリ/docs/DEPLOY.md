@@ -18,7 +18,7 @@
 
 ### 手順（概要）
 
-1. GitHub にリポジトリを用意し、`本部経費処理アプリ` 内の **`app.py`・`requirements.txt`・同階層の `.py`** などをすべて push する。
+1. GitHub にリポジトリを用意し、**リポジトリルートの `requirements.txt`**・**`honbu_keihi_app.py`**・`本部経費処理アプリ` 内の **`.py`** などをすべて push する（Streamlit Cloud は **サブフォルダの `requirements.txt` を優先**しがちなため、依存は **ルートに集約**し、起動は **`honbu_keihi_app.py`** を指定する）。
 
 2. [share.streamlit.io](https://share.streamlit.io/) で **New app** を開く。
 
@@ -28,7 +28,7 @@
    |------|--------|
    | Repository | 上記の GitHub リポジトリ |
    | Branch | `main`（または利用中のブランチ） |
-   | Main file path | **A の場合:** `本部経費処理アプリ/app.py`<br>**B の場合:** `app.py` |
+   | Main file path | **A の場合（推奨）:** `honbu_keihi_app.py`（ASCII のみ・ルート）<br>**従来:** `本部経費処理アプリ/app.py` |
 
    **halka_AI エントリで公開したい場合**は Main file path を  
    `本部経費処理アプリ/halka_AI.py`（A の場合）にする。
