@@ -1,0 +1,11 @@
+# Streamlit Community Cloud: リポジトリ直下を参照するためここに集約（サブフォルダの日本語パス指定を避ける）
+streamlit>=1.29,<2
+pandas>=2.0,<3
+numpy>=1.26
+openpyxl>=3.1
+pdfplumber>=0.10
+PyMuPDF>=1.24
+pypdfium2>=4.0
+altair>=5.0
+pytesseract>=0.3.10
+Pillow>=10.0
