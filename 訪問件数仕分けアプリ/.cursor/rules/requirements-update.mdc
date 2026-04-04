@@ -1,0 +1,9 @@
+---
+description: requirements.txt を変えたときも同じ Git push / Streamlit 更新フローを提案する
+globs: "requirements.txt"
+alwaysApply: false
+---
+
+# 依存変更時
+
+`requirements.txt` を編集したら、**update-and-deploy.mdc** と同様に、ローカルで `pip install -r requirements.txt` と `streamlit run app.py` の確認、`git add` / `commit` / `push` を提案する。

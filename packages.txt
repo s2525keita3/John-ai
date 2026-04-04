@@ -1,0 +1,4 @@
+# Streamlit Community Cloud（Linux）で Tesseract OCR を使う場合
+# 本部経費処理アプリの横浜信金スキャンPDF用。不要なら空にするかファイルごと削除可。
+tesseract-ocr
+tesseract-ocr-jpn

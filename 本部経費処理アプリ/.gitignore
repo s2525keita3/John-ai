@@ -1,0 +1,2 @@
+# Tesseract 日本語データ（大容量・必要なら tessdata/README.txt を参照）
+tessdata/*.traineddata

@@ -1,0 +1,8 @@
+streamlit>=1.29
+pandas>=2.0
+openpyxl>=3.1
+pymupdf>=1.24
+# 横浜信金スキャンPDF（OCR）: Tesseract を優先（下記）。EasyOCR は任意で pip install easyocr
+pytesseract>=0.3.10
+Pillow>=10.0
+# 本体は別途: winget install UB-Mannheim.TesseractOCR  （日本語 jpn はインストーラに同梱）

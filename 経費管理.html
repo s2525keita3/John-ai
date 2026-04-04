@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>経費管理</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Meiryo, sans-serif; background: #f5f7fa; color: #333; }
+
+  header {
+    background: #2c3e50;
+    color: white;
+    padding: 16px 24px;
+    font-size: 20px;
+    font-weight: bold;
+  }
+
+  .container { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+
+  /* 入力フォーム */
+  .card {
+    background: white;
+    border-radius: 8px;
+    padding: 20px 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    margin-bottom: 24px;
+  }
+
+  .card h2 { font-size: 15px; color: #666; margin-bottom: 14px; text-transform: uppercase; letter-spacing: .5px; }
+
+  .form-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+
+  .form-group { display: flex; flex-direction: column; gap: 4px; }
+  .form-group label { font-size: 12px; color: #888; }
+  .form-group input,
+  .form-group select {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    outline: none;
+    transition: border .2s;
+  }
+  .form-group input:focus,
+  .form-group select:focus { border-color: #3498db; }
+
+  #date-input { width: 140px; }
+  #category-input { width: 130px; }
+  #amount-input { width: 120px; }
+  #desc-input { width: 220px; }
+  #payee-input { width: 140px; }
+
+  .btn {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background .2s;
+  }
+  .btn-primary { background: #3498db; color: white; }
+  .btn-primary:hover { background: #2980b9; }
+  .btn-danger { background: #e74c3c; color: white; font-size: 12px; padding: 4px 10px; }
+  .btn-danger:hover { background: #c0392b; }
+  .btn-export { background: #27ae60; color: white; }
+  .btn-export:hover { background: #229954; }
+  .btn-clear { background: #95a5a6; color: white; }
+  .btn-clear:hover { background: #7f8c8d; }
+
+  /* サマリー */
+  .summary-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  .summary-card {
+    flex: 1;
+    min-width: 160px;
+    background: white;
+    border-radius: 8px;
+    padding: 16px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    border-left: 4px solid #3498db;
+  }
+  .summary-card.total { border-left-color: #e74c3c; }
+  .summary-card .label { font-size: 12px; color: #888; margin-bottom: 4px; }
+  .summary-card .value { font-size: 22px; font-weight: bold; color: #2c3e50; }
+
+  /* テーブル */
+  .table-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .filter-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .filter-row input,
+  .filter-row select {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    outline: none;
+  }
+  .filter-row input:focus,
+  .filter-row select:focus { border-color: #3498db; }
+
+  .export-row { display: flex; gap: 8px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  thead { background: #f8f9fa; }
+  thead th {
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: #888;
+    border-bottom: 2px solid #eee;
+    white-space: nowrap;
+  }
+  tbody tr { border-bottom: 1px solid #f0f0f0; transition: background .1s; }
+  tbody tr:hover { background: #fafbfc; }
+  tbody td { padding: 10px 12px; }
+  .amount-cell { text-align: right; font-weight: 600; color: #e74c3c; }
+  .empty-msg { text-align: center; color: #aaa; padding: 40px; font-size: 14px; }
+
+  /* カテゴリバッジ */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<header>経費管理</header>
+
+<div class="container">
+
+  <!-- 入力フォーム -->
+  <div class="card">
+    <h2>経費を追加</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label>日付</label>
+        <input type="date" id="date-input">
+      </div>
+      <div class="form-group">
+        <label>カテゴリ</label>
+        <select id="category-input">
+          <option value="交通費">交通費</option>
+          <option value="食費">食費</option>
+          <option value="接待費">接待費</option>
+          <option value="消耗品">消耗品</option>
+          <option value="通信費">通信費</option>
+          <option value="宿泊費">宿泊費</option>
+          <option value="その他">その他</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>金額 (円)</label>
+        <input type="number" id="amount-input" placeholder="0" min="0">
+      </div>
+      <div class="form-group">
+        <label>支払先</label>
+        <input type="text" id="payee-input" placeholder="例: コンビニ">
+      </div>
+      <div class="form-group">
+        <label>摘要</label>
+        <input type="text" id="desc-input" placeholder="例: 打ち合わせ用">
+      </div>
+      <button class="btn btn-primary" onclick="addEntry()">追加</button>
+    </div>
+  </div>
+
+  <!-- サマリー -->
+  <div class="summary-row" id="summary-row"></div>
+
+  <!-- テーブル -->
+  <div class="card">
+    <div class="table-actions">
+      <div class="filter-row">
+        <select id="filter-month" onchange="renderTable()">
+          <option value="">全期間</option>
+        </select>
+        <select id="filter-category" onchange="renderTable()">
+          <option value="">全カテゴリ</option>
+        </select>
+        <input type="text" id="filter-search" placeholder="検索..." oninput="renderTable()" style="width:140px">
+      </div>
+      <div class="export-row">
+        <button class="btn btn-export" onclick="exportCSV()">CSV出力</button>
+        <button class="btn btn-clear" onclick="clearAll()">全削除</button>
+      </div>
+    </div>
+
+    <table id="expense-table">
+      <thead>
+        <tr>
+          <th>日付</th>
+          <th>カテゴリ</th>
+          <th>支払先</th>
+          <th>摘要</th>
+          <th style="text-align:right">金額</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// カテゴリ色
+const COLORS = {
+  '交通費':  ['#e8f4fd','#2980b9'],
+  '食費':    ['#fef9e7','#f39c12'],
+  '接待費':  ['#fdf2f8','#8e44ad'],
+  '消耗品':  ['#eafaf1','#27ae60'],
+  '通信費':  ['#eaf4fb','#1abc9c'],
+  '宿泊費':  ['#fef5e7','#e67e22'],
+  'その他':  ['#f2f3f4','#7f8c8d'],
+};
+
+let data = JSON.parse(localStorage.getItem('expenses') || '[]');
+
+// 今日の日付をデフォルトに
+document.getElementById('date-input').value = new Date().toISOString().split('T')[0];
+
+function save() {
+  localStorage.setItem('expenses', JSON.stringify(data));
+}
+
+function addEntry() {
+  const date     = document.getElementById('date-input').value;
+  const category = document.getElementById('category-input').value;
+  const amount   = parseInt(document.getElementById('amount-input').value);
+  const payee    = document.getElementById('payee-input').value.trim();
+  const desc     = document.getElementById('desc-input').value.trim();
+
+  if (!date)        { alert('日付を入力してください'); return; }
+  if (!amount || amount <= 0) { alert('金額を入力してください'); return; }
+
+  data.push({ id: Date.now(), date, category, amount, payee, desc });
+  data.sort((a,b) => b.date.localeCompare(a.date));
+  save();
+
+  // リセット
+  document.getElementById('amount-input').value = '';
+  document.getElementById('payee-input').value = '';
+  document.getElementById('desc-input').value = '';
+
+  updateFilters();
+  renderAll();
+}
+
+function deleteEntry(id) {
+  data = data.filter(d => d.id !== id);
+  save();
+  updateFilters();
+  renderAll();
+}
+
+function clearAll() {
+  if (!confirm('全データを削除しますか？')) return;
+  data = [];
+  save();
+  updateFilters();
+  renderAll();
+}
+
+function getFiltered() {
+  const month    = document.getElementById('filter-month').value;
+  const category = document.getElementById('filter-category').value;
+  const search   = document.getElementById('filter-search').value.toLowerCase();
+
+  return data.filter(d => {
+    if (month    && !d.date.startsWith(month))              return false;
+    if (category && d.category !== category)                return false;
+    if (search   && !(d.payee + d.desc).toLowerCase().includes(search)) return false;
+    return true;
+  });
+}
+
+function renderAll() {
+  renderSummary();
+  renderTable();
+}
+
+function renderSummary() {
+  const filtered = getFiltered();
+  const total = filtered.reduce((s,d) => s+d.amount, 0);
+
+  // カテゴリ別集計
+  const byCategory = {};
+  for (const d of filtered) {
+    byCategory[d.category] = (byCategory[d.category] || 0) + d.amount;
+  }
+
+  let html = `<div class="summary-card total">
+    <div class="label">合計金額</div>
+    <div class="value">¥${total.toLocaleString()}</div>
+  </div>`;
+
+  for (const [cat, amt] of Object.entries(byCategory).sort((a,b)=>b[1]-a[1])) {
+    const [bg, fg] = COLORS[cat] || ['#f2f3f4','#7f8c8d'];
+    html += `<div class="summary-card" style="border-left-color:${fg}">
+      <div class="label">${cat}</div>
+      <div class="value" style="color:${fg}">¥${amt.toLocaleString()}</div>
+    </div>`;
+  }
+
+  document.getElementById('summary-row').innerHTML = html;
+}
+
+function renderTable() {
+  renderSummary();
+  const filtered = getFiltered();
+  const tbody = document.getElementById('table-body');
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-msg">データがありません</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(d => {
+    const [bg, fg] = COLORS[d.category] || ['#f2f3f4','#7f8c8d'];
+    return `<tr>
+      <td>${d.date}</td>
+      <td><span class="badge" style="background:${bg};color:${fg}">${d.category}</span></td>
+      <td>${esc(d.payee)}</td>
+      <td>${esc(d.desc)}</td>
+      <td class="amount-cell">¥${d.amount.toLocaleString()}</td>
+      <td><button class="btn btn-danger" onclick="deleteEntry(${d.id})">削除</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function esc(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function updateFilters() {
+  // 月フィルター
+  const months = [...new Set(data.map(d => d.date.slice(0,7)))].sort().reverse();
+  const mSel = document.getElementById('filter-month');
+  const curM = mSel.value;
+  mSel.innerHTML = '<option value="">全期間</option>' +
+    months.map(m => `<option value="${m}" ${m===curM?'selected':''}>${m}</option>`).join('');
+
+  // カテゴリフィルター
+  const cats = [...new Set(data.map(d => d.category))].sort();
+  const cSel = document.getElementById('filter-category');
+  const curC = cSel.value;
+  cSel.innerHTML = '<option value="">全カテゴリ</option>' +
+    cats.map(c => `<option value="${c}" ${c===curC?'selected':''}>${c}</option>`).join('');
+}
+
+function exportCSV() {
+  const filtered = getFiltered();
+  if (filtered.length === 0) { alert('データがありません'); return; }
+
+  const header = ['日付', 'カテゴリ', '支払先', '摘要', '金額'];
+  const rows = filtered.map(d => [d.date, d.category, d.payee, d.desc, d.amount]);
+
+  const csv = [header, ...rows]
+    .map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(','))
+    .join('\r\n');
+
+  // BOM付きUTF-8（Excelで文字化けしない）
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `経費_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 初期表示
+updateFilters();
+renderAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>経費管理</title>
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Meiryo,sans-serif;background:#f4f6f9;color:#333;font-size:14px}
+
+/* ヘッダー */
+header{background:#1e2d40;color:#fff;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+header h1{font-size:17px;font-weight:700;letter-spacing:.3px}
+.header-stats{display:flex;gap:16px;font-size:13px;color:#a0b4c8}
+.header-stats span b{color:#fff}
+
+/* インポートバー */
+.import-bar{background:#fff;border-bottom:1px solid #e2e6ea;padding:10px 20px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.import-bar .lbl{font-size:12px;color:#888;margin-right:4px}
+.ibtn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:5px;font-size:13px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;font-weight:500}
+.ibtn-amex  {background:#e8f0fd;color:#1a56db;border-color:#c3d9fb}
+.ibtn-gmo   {background:#fff8e6;color:#b45309;border-color:#fde68a}
+.ibtn-enefree{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
+.ibtn-manual{background:#f5f3ff;color:#6d28d9;border-color:#ddd6fe}
+.ibtn:hover{filter:brightness(.95)}
+input[type=file]{display:none}
+
+/* フィルター */
+.filter-bar{padding:10px 20px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#f8f9fb;border-bottom:1px solid #e2e6ea}
+.filter-bar select,.filter-bar input{border:1px solid #d1d5db;border-radius:5px;padding:5px 9px;font-size:13px;background:#fff;outline:none}
+.filter-bar select:focus,.filter-bar input:focus{border-color:#2563eb}
+.spacer{flex:1}
+.btn{padding:6px 14px;border:none;border-radius:5px;font-size:13px;cursor:pointer;font-weight:500;transition:background .15s}
+.btn-export{background:#059669;color:#fff}.btn-export:hover{background:#047857}
+.btn-del{background:#dc2626;color:#fff;font-size:12px;padding:3px 8px}.btn-del:hover{background:#b91c1c}
+.btn-gray{background:#6b7280;color:#fff}.btn-gray:hover{background:#4b5563}
+
+/* テーブル */
+.tbl-wrap{overflow-x:auto;padding:0 20px 20px}
+table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.07);margin-top:12px}
+thead tr{background:#f1f5f9}
+th{padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:2px solid #e2e8f0;white-space:nowrap}
+td{padding:7px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+tr:hover td{background:#f8faff}
+tr.excluded td{opacity:.45;text-decoration:line-through}
+tr.uncategorized td:nth-child(6){background:#fffbeb}
+
+/* ソースバッジ */
+.src{display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;white-space:nowrap}
+.src-amex   {background:#1a56db}
+.src-gmo    {background:#d97706}
+.src-enefree{background:#059669}
+.src-shinkin{background:#7c3aed}
+.src-manual {background:#6b7280}
+
+/* 金額 */
+.amt{text-align:right;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.amt.out{color:#dc2626}
+.amt.inc{color:#059669}
+
+/* インライン編集 */
+.editable{cursor:pointer;border-radius:4px;padding:2px 4px;min-width:80px;display:inline-block}
+.editable:hover{background:#e8f0fd}
+.editable.empty{color:#aaa;font-style:italic}
+select.cell-sel,input.cell-inp{border:1.5px solid #2563eb;border-radius:4px;padding:3px 6px;font-size:13px;outline:none;background:#fff;min-width:80px}
+
+/* 手動入力エリア */
+.manual-area{background:#fff;border-top:1px solid #e2e6ea;padding:12px 20px;display:none;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.manual-area.open{display:flex}
+.fg{display:flex;flex-direction:column;gap:3px}
+.fg label{font-size:11px;color:#888}
+.fg input,.fg select{border:1px solid #d1d5db;border-radius:5px;padding:6px 9px;font-size:13px;outline:none}
+.fg input:focus,.fg select:focus{border-color:#2563eb}
+
+/* 空メッセージ */
+.empty-msg{text-align:center;color:#94a3b8;padding:48px 0;font-size:14px}
+
+/* ステータス通知 */
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e2d40;color:#fff;padding:9px 20px;border-radius:20px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:999}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>経費管理</h1>
+  <div class="header-stats" id="stats"></div>
+</header>
+
+<!-- インポートバー -->
+<div class="import-bar">
+  <span class="lbl">取り込む：</span>
+
+  <label class="ibtn ibtn-amex">
+    📥 アメックス (.xlsx)
+    <input type="file" accept=".xlsx,.xls" onchange="importAmex(this)">
+  </label>
+
+  <label class="ibtn ibtn-gmo">
+    📥 GMOあおぞら (.csv)
+    <input type="file" accept=".csv" onchange="importGMO(this)">
+  </label>
+
+  <label class="ibtn ibtn-enefree">
+    📥 エネフリ (.xlsx)
+    <input type="file" accept=".xlsx,.xls" onchange="importEnefree(this)">
+  </label>
+
+  <button class="ibtn ibtn-manual" onclick="toggleManual()">✏️ 手動入力</button>
+</div>
+
+<!-- 手動入力フォーム -->
+<div class="manual-area" id="manual-area">
+  <div class="fg"><label>日付</label><input type="date" id="m-date"></div>
+  <div class="fg"><label>ソース</label>
+    <select id="m-src">
+      <option value="手動">手動</option>
+      <option value="横浜信金">横浜信金</option>
+      <option value="アメックス">アメックス</option>
+      <option value="GMOあおぞら">GMOあおぞら</option>
+    </select>
+  </div>
+  <div class="fg"><label>摘要</label><input type="text" id="m-desc" placeholder="摘要" style="width:200px"></div>
+  <div class="fg"><label>出金 (円)</label><input type="number" id="m-out" placeholder="0" style="width:110px" min="0"></div>
+  <div class="fg"><label>入金 (円)</label><input type="number" id="m-in" placeholder="0" style="width:110px" min="0"></div>
+  <div class="fg"><label>科目</label>
+    <select id="m-kamoku"><option value="">未分類</option></select>
+  </div>
+  <button class="btn" style="background:#6d28d9;color:#fff;align-self:flex-end" onclick="manualAdd()">追加</button>
+</div>
+
+<!-- フィルター -->
+<div class="filter-bar">
+  <select id="f-src"    onchange="renderTable()"><option value="">全ソース</option></select>
+  <select id="f-month"  onchange="renderTable()"><option value="">全期間</option></select>
+  <select id="f-kamoku" onchange="renderTable()"><option value="">全科目</option></select>
+  <select id="f-status" onchange="renderTable()">
+    <option value="">全ステータス</option>
+    <option value="uncategorized">未分類のみ</option>
+    <option value="excluded">除外のみ</option>
+  </select>
+  <input type="text" id="f-search" placeholder="キーワード検索..." oninput="renderTable()" style="width:160px">
+  <div class="spacer"></div>
+  <button class="btn btn-export" onclick="exportCSV()">CSV出力</button>
+  <button class="btn btn-gray"   onclick="clearAll()">全削除</button>
+</div>
+
+<!-- テーブル -->
+<div class="tbl-wrap">
+  <table id="main-table">
+    <thead><tr>
+      <th>日付</th>
+      <th>ソース</th>
+      <th>摘要</th>
+      <th style="text-align:right">出金</th>
+      <th style="text-align:right">入金</th>
+      <th>科目</th>
+      <th>内訳</th>
+      <th></th>
+    </tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ============================================================
+// 設定
+// ============================================================
+const KAMOKU_LIST = [
+  '', '旅費交通費', '通信費', '水道光熱費', '備品消耗品費',
+  '接待交際費', '外注費', '福利厚生費', '給与', '燃料費',
+  '雑費', '除外', 'その他'
+];
+
+const SRC_CLASS = {
+  'アメックス': 'amex', 'GMOあおぞら': 'gmo', 'エネフリ': 'enefree',
+  '横浜信金': 'shinkin', '手動': 'manual'
+};
+
+// ============================================================
+// データ
+// ============================================================
+let DATA = JSON.parse(localStorage.getItem('keihi_v2') || '[]');
+
+function save() {
+  localStorage.setItem('keihi_v2', JSON.stringify(DATA));
+}
+
+function addRows(rows) {
+  DATA = DATA.concat(rows);
+  DATA.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  save();
+  updateFilters();
+  renderTable();
+  renderStats();
+}
+
+// ============================================================
+// インポーター
+// ============================================================
+
+// --- アメックス XLSX ---
+async function importAmex(input) {
+  try {
+    const file = input.files[0]; if (!file) return;
+    const ab   = await file.arrayBuffer();
+    const wb   = XLSX.read(ab);
+    const ws   = wb.Sheets['ご利用履歴'] || wb.Sheets[wb.SheetNames[0]];
+
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    // ヘッダー行を探す（「ご利用日」がある行）
+    let hi = rows.findIndex(r => String(r[0]).includes('ご利用日'));
+    if (hi < 0) hi = 6;
+
+    const result = [];
+    for (let i = hi + 1; i < rows.length; i++) {
+      const r    = rows[i];
+      const date = normDate_(r[0]);
+      const desc = String(r[2] || '').trim();
+      const amt  = parseAmt_(r[3]);
+      if (!date || !desc || !amt) continue;
+
+      result.push(makeRow_({ date, src: 'アメックス', desc, out: amt, filename: file.name }));
+    }
+
+    addRows(result);
+    toast(`アメックス: ${result.length}件 取り込みました`);
+  } catch (e) { toast('❌ ' + e.message, true); }
+  input.value = '';
+}
+
+// --- GMOあおぞら CSV (Shift-JIS) ---
+async function importGMO(input) {
+  try {
+    const file = input.files[0]; if (!file) return;
+    const buf  = await file.arrayBuffer();
+
+    let text;
+    try { text = new TextDecoder('shift-jis').decode(buf); }
+    catch (_) { text = new TextDecoder('utf-8').decode(buf); }
+
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    const result = [];
+
+    // 1行目はヘッダーのためスキップ
+    for (let i = 1; i < lines.length; i++) {
+      const c = parseCsvLine_(lines[i]);
+      const dateStr = c[0].replace(/"/g, '').trim();
+      if (!/^\d{8}$/.test(dateStr)) continue;
+
+      const date = `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`;
+      const desc = (c[1] || '').replace(/"/g, '').trim();
+      const inc  = parseAmt_(c[2]);  // 入金額
+      const out  = parseAmt_(c[3]);  // 出金額
+      if (!inc && !out) continue;
+
+      result.push(makeRow_({ date, src: 'GMOあおぞら', desc, out, inc, filename: file.name }));
+    }
+
+    addRows(result);
+    toast(`GMOあおぞら: ${result.length}件 取り込みました`);
+  } catch (e) { toast('❌ ' + e.message, true); }
+  input.value = '';
+}
+
+// --- エネフリ XLSX ---
+async function importEnefree(input) {
+  try {
+    const file = input.files[0]; if (!file) return;
+    const ab   = await file.arrayBuffer();
+    const wb   = XLSX.read(ab);
+    const ws   = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    // 年を判定（シート名や最初のデータから）
+    const sheetName = wb.SheetNames[0];
+    const yearMatch = sheetName.match(/(\d{4})/);
+    const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
+
+    // ヘッダー行から月列を特定
+    const header = rows[0] || [];
+    const monthCols = [];
+    for (let c = 4; c < header.length; c++) {
+      const m = String(header[c]).match(/^(\d+)月/);
+      if (m) monthCols.push({ col: c, month: parseInt(m[1]) });
+    }
+
+    const result = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r     = rows[i];
+      const dept  = String(r[0] || '').trim();
+      const staff = String(r[3] || '').trim();
+      if (!staff || staff.includes('合計') || staff.includes('未使用') || !dept) continue;
+
+      for (const { col, month } of monthCols) {
+        const amt = parseAmt_(r[col]);
+        if (!amt) continue;
+        const mm   = String(month).padStart(2, '0');
+        const date = `${year}-${mm}-01`;
+        result.push(makeRow_({
+          date, src: 'エネフリ',
+          desc: `${staff}（${dept}）`,
+          out: amt,
+          kamoku: '燃料費',
+          filename: file.name
+        }));
+      }
+    }
+
+    addRows(result);
+    toast(`エネフリ: ${result.length}件 取り込みました`);
+  } catch (e) { toast('❌ ' + e.message, true); }
+  input.value = '';
+}
+
+// --- 手動入力 ---
+function manualAdd() {
+  const date   = document.getElementById('m-date').value;
+  const src    = document.getElementById('m-src').value;
+  const desc   = document.getElementById('m-desc').value.trim();
+  const out    = parseAmt_(document.getElementById('m-out').value);
+  const inc    = parseAmt_(document.getElementById('m-in').value);
+  const kamoku = document.getElementById('m-kamoku').value;
+
+  if (!date) { toast('日付を入力してください', true); return; }
+  if (!desc) { toast('摘要を入力してください', true); return; }
+  if (!out && !inc) { toast('金額を入力してください', true); return; }
+
+  addRows([makeRow_({ date, src, desc, out, inc, kamoku })]);
+  document.getElementById('m-desc').value = '';
+  document.getElementById('m-out').value  = '';
+  document.getElementById('m-in').value   = '';
+  toast('追加しました');
+}
+
+function toggleManual() {
+  const el = document.getElementById('manual-area');
+  el.classList.toggle('open');
+}
+
+// ============================================================
+// データ作成ヘルパー
+// ============================================================
+function makeRow_({ date, src, desc, out = 0, inc = 0, kamoku = '', uciwake = '', filename = '' }) {
+  return {
+    id:       Date.now() + Math.random(),
+    date:     date || '',
+    src:      src  || '手動',
+    desc:     desc || '',
+    out:      out,
+    inc:      inc,
+    kamoku:   kamoku  || '',
+    uciwake:  uciwake || '',
+    filename: filename
+  };
+}
+
+// ============================================================
+// テーブル描画
+// ============================================================
+function getFiltered() {
+  const fSrc    = document.getElementById('f-src').value;
+  const fMonth  = document.getElementById('f-month').value;
+  const fKamoku = document.getElementById('f-kamoku').value;
+  const fStatus = document.getElementById('f-status').value;
+  const fSearch = document.getElementById('f-search').value.toLowerCase();
+
+  return DATA.filter(d => {
+    if (fSrc    && d.src    !== fSrc)                return false;
+    if (fMonth  && !d.date.startsWith(fMonth))       return false;
+    if (fKamoku && d.kamoku !== fKamoku)             return false;
+    if (fStatus === 'uncategorized' && d.kamoku)     return false;
+    if (fStatus === 'excluded' && d.kamoku !== '除外') return false;
+    if (fSearch && !d.desc.toLowerCase().includes(fSearch)) return false;
+    return true;
+  });
+}
+
+function renderTable() {
+  const rows  = getFiltered();
+  const tbody = document.getElementById('tbody');
+  renderStats();
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-msg">データがありません。上の「取り込む」からファイルを読み込んでください。</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(d => {
+    const cls   = SRC_CLASS[d.src] || 'manual';
+    const isEx  = d.kamoku === '除外';
+    const isUncat = !d.kamoku;
+    const trCls = isEx ? 'excluded' : isUncat ? 'uncategorized' : '';
+
+    const kamokuOpts = KAMOKU_LIST.map(k =>
+      `<option value="${esc(k)}" ${d.kamoku === k ? 'selected' : ''}>${k || '(未分類)'}</option>`
+    ).join('');
+
+    return `<tr class="${trCls}" data-id="${d.id}">
+      <td style="white-space:nowrap;color:#555">${d.date}</td>
+      <td><span class="src src-${cls}">${esc(d.src)}</span></td>
+      <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(d.desc)}">${esc(d.desc)}</td>
+      <td class="amt out">${d.out ? '¥' + d.out.toLocaleString() : ''}</td>
+      <td class="amt inc">${d.inc ? '¥' + d.inc.toLocaleString() : ''}</td>
+      <td>
+        <select class="cell-sel" onchange="updateField(${d.id},'kamoku',this.value)">
+          ${kamokuOpts}
+        </select>
+      </td>
+      <td>
+        <input class="cell-inp" type="text" value="${esc(d.uciwake)}" placeholder="内訳"
+          style="width:110px"
+          onchange="updateField(${d.id},'uciwake',this.value)">
+      </td>
+      <td><button class="btn btn-del" onclick="deleteRow(${d.id})">削除</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderStats() {
+  const total   = DATA.length;
+  const uncat   = DATA.filter(d => !d.kamoku).length;
+  const totalOut = DATA.reduce((s, d) => s + (d.out || 0), 0);
+  document.getElementById('stats').innerHTML =
+    `<span>全 <b>${total}</b> 件</span>` +
+    (uncat ? `<span>未分類 <b style="color:#fbbf24">${uncat}</b> 件</span>` : `<span style="color:#4ade80">✓ 全件分類済み</span>`) +
+    `<span>出金合計 <b>¥${totalOut.toLocaleString()}</b></span>`;
+}
+
+// ============================================================
+// データ操作
+// ============================================================
+function updateField(id, field, value) {
+  const row = DATA.find(d => d.id === id);
+  if (!row) return;
+  row[field] = value;
+  save();
+  renderTable();
+  renderStats();
+}
+
+function deleteRow(id) {
+  DATA = DATA.filter(d => d.id !== id);
+  save();
+  updateFilters();
+  renderTable();
+  renderStats();
+}
+
+function clearAll() {
+  if (!confirm('全データを削除しますか？')) return;
+  DATA = [];
+  save();
+  updateFilters();
+  renderTable();
+  renderStats();
+}
+
+// ============================================================
+// フィルター更新
+// ============================================================
+function updateFilters() {
+  const srcs   = [...new Set(DATA.map(d => d.src))].sort();
+  const months = [...new Set(DATA.map(d => d.date.slice(0, 7)))].sort().reverse();
+  const kamokus = [...new Set(DATA.map(d => d.kamoku).filter(Boolean))].sort();
+
+  const rebuild = (id, items, label, cur) => {
+    const el = document.getElementById(id);
+    const prev = el.value;
+    el.innerHTML = `<option value="">${label}</option>` +
+      items.map(v => `<option value="${esc(v)}" ${v === prev ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  };
+
+  rebuild('f-src',    srcs,    '全ソース',  '');
+  rebuild('f-month',  months,  '全期間',    '');
+  rebuild('f-kamoku', kamokus, '全科目',    '');
+
+  // 手動フォームの科目セレクトも更新
+  const mSel = document.getElementById('m-kamoku');
+  mSel.innerHTML = KAMOKU_LIST.map(k =>
+    `<option value="${esc(k)}">${k || '(未分類)'}</option>`
+  ).join('');
+}
+
+// ============================================================
+// CSV出力
+// ============================================================
+function exportCSV() {
+  const rows = getFiltered();
+  if (!rows.length) { toast('データがありません', true); return; }
+
+  const header = ['日付', 'ソース', '摘要', '出金', '入金', '科目', '内訳'];
+  const body   = rows.map(d => [d.date, d.src, d.desc, d.out || '', d.inc || '', d.kamoku, d.uciwake]);
+
+  const csv = [header, ...body]
+    .map(r => r.map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','))
+    .join('\r\n');
+
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `経費_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('CSVを出力しました');
+}
+
+// ============================================================
+// ユーティリティ
+// ============================================================
+function normDate_(v) {
+  if (!v) return '';
+  if (typeof v === 'number') {
+    const d = new Date(Math.round((v - 25569) * 86400000));
+    return d.toISOString().slice(0, 10);
+  }
+  return String(v).replace(/\//g, '-').slice(0, 10);
+}
+
+function parseAmt_(v) {
+  if (v === '' || v === null || v === undefined) return 0;
+  const n = parseInt(String(v).replace(/[,，\s￥¥]/g, ''), 10);
+  return isNaN(n) ? 0 : Math.abs(n);
+}
+
+function parseCsvLine_(line) {
+  const r = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (c === ',' && !inQ) { r.push(cur); cur = ''; }
+    else cur += c;
+  }
+  r.push(cur);
+  return r;
+}
+
+function esc(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toast(msg, isErr) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.background = isErr ? '#dc2626' : '#1e2d40';
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ============================================================
+// 初期化
+// ============================================================
+document.getElementById('m-date').value = new Date().toISOString().slice(0, 10);
+updateFilters();
+renderTable();
+renderStats();
+
+// XLSXライブラリ未ロード時の警告
+window.addEventListener('load', () => {
+  if (typeof XLSX === 'undefined') {
+    toast('⚠ XLSXライブラリ未ロード。インターネット接続を確認してください。', true);
+  }
+});
+</script>
+</body>
+</html>

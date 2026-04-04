@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>経費統合管理</title>
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Meiryo,sans-serif;background:#f0f2f5;color:#333;font-size:14px}
+header{background:#1a2333;color:#fff;padding:14px 24px;display:flex;align-items:center;gap:12px}
+header h1{font-size:18px;font-weight:700}
+header .sub{font-size:12px;color:#8899aa;margin-top:2px}
+
+/* Tabs */
+.tabs{background:#fff;border-bottom:2px solid #e0e4eb;display:flex;padding:0 24px}
+.tab{padding:12px 20px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;font-size:14px;color:#667;transition:all .2s}
+.tab.active{color:#2563eb;border-bottom-color:#2563eb;font-weight:600}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+.container{max-width:1100px;margin:24px auto;padding:0 16px}
+
+/* Cards */
+.card{background:#fff;border-radius:10px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:20px}
+.card h2{font-size:13px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px}
+.card h3{font-size:14px;font-weight:600;margin-bottom:10px;color:#444}
+
+/* Import sections */
+.import-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:700px){.import-grid{grid-template-columns:1fr}}
+
+.import-box{border:2px dashed #d0d5dd;border-radius:8px;padding:16px;transition:border-color .2s}
+.import-box:hover{border-color:#2563eb}
+.import-box .source-label{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;margin-bottom:8px}
+.import-box .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;color:#fff}
+.import-box .desc{font-size:12px;color:#888;margin-bottom:10px;line-height:1.5}
+
+.file-btn{display:inline-block;padding:7px 14px;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer;font-size:13px;border:none;transition:background .2s}
+.file-btn:hover{background:#1d4ed8}
+input[type=file]{display:none}
+
+.status{font-size:12px;margin-top:6px;padding:4px 8px;border-radius:4px}
+.status.ok{background:#d1fae5;color:#065f46}
+.status.err{background:#fee2e2;color:#991b1b}
+.status.info{background:#e0f2fe;color:#0369a1}
+
+/* Summary */
+.summary-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+.sum-card{flex:1;min-width:130px;background:#fff;border-radius:8px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.08);border-left:4px solid #ddd}
+.sum-card .lbl{font-size:11px;color:#888;margin-bottom:3px}
+.sum-card .val{font-size:20px;font-weight:700}
+
+/* Filters */
+.filter-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.filter-bar select,.filter-bar input{border:1px solid #ddd;border-radius:6px;padding:6px 10px;font-size:13px;outline:none}
+.filter-bar select:focus,.filter-bar input:focus{border-color:#2563eb}
+.filter-bar .spacer{flex:1}
+.btn{padding:7px 16px;border:none;border-radius:6px;font-size:13px;cursor:pointer;transition:background .2s;font-weight:500}
+.btn-green{background:#059669;color:#fff}.btn-green:hover{background:#047857}
+.btn-red{background:#dc2626;color:#fff;font-size:12px;padding:4px 10px}.btn-red:hover{background:#b91c1c}
+.btn-gray{background:#6b7280;color:#fff}.btn-gray:hover{background:#4b5563}
+.btn-blue{background:#2563eb;color:#fff}.btn-blue:hover{background:#1d4ed8}
+
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;padding:9px 10px;font-size:11px;color:#888;border-bottom:2px solid #eee;white-space:nowrap;background:#fafafa}
+tbody tr{border-bottom:1px solid #f0f0f0;transition:background .1s}
+tbody tr:hover{background:#f8faff}
+tbody td{padding:8px 10px;vertical-align:middle}
+.num{text-align:right;font-weight:600}
+.num.expense{color:#dc2626}
+.num.income{color:#059669}
+.source-chip{display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;white-space:nowrap}
+.empty{text-align:center;color:#aaa;padding:40px;font-size:14px}
+
+/* Manual form */
+.form-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+.fg{display:flex;flex-direction:column;gap:4px}
+.fg label{font-size:11px;color:#888}
+.fg input,.fg select{border:1px solid #ddd;border-radius:6px;padding:7px 10px;font-size:13px;outline:none}
+.fg input:focus,.fg select:focus{border-color:#2563eb}
+
+/* Sheet selector */
+.sheet-select-area{margin-top:8px;display:none}
+.sheet-select-area select{border:1px solid #ddd;border-radius:6px;padding:6px 10px;font-size:13px;margin-right:8px}
+
+/* Info box */
+.info-box{background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 14px;font-size:12px;color:#1e40af;margin-bottom:10px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>経費統合管理</h1>
+    <div class="sub">アメックス / GMOあおぞら / 本部経費 / エネフリ / 横浜信金</div>
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('view')">統合ビュー</div>
+  <div class="tab" onclick="switchTab('import')">インポート</div>
+  <div class="tab" onclick="switchTab('manual')">手動入力</div>
+</div>
+
+<!-- ===== 統合ビュー ===== -->
+<div id="tab-view" class="tab-content active">
+  <div class="container">
+    <div class="summary-row" id="summary-row"></div>
+
+    <div class="card">
+      <div class="filter-bar">
+        <select id="f-source" onchange="render()"><option value="">全ソース</option></select>
+        <select id="f-month"  onchange="render()"><option value="">全期間</option></select>
+        <select id="f-cat"    onchange="render()"><option value="">全カテゴリ</option></select>
+        <input  id="f-search" type="text" placeholder="キーワード検索..." oninput="render()" style="width:160px">
+        <div class="spacer"></div>
+        <button class="btn btn-green" onclick="exportCSV()">CSV出力</button>
+        <button class="btn btn-gray"  onclick="clearAll()">全削除</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>日付</th><th>ソース</th><th>科目</th>
+          <th>支払先/摘要</th><th>摘要2</th>
+          <th style="text-align:right">入金</th>
+          <th style="text-align:right">出金</th>
+          <th>メモ</th><th></th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== インポート ===== -->
+<div id="tab-import" class="tab-content">
+  <div class="container">
+    <div class="import-grid">
+
+      <!-- アメックス -->
+      <div class="card">
+        <h3><span class="badge" style="background:#1a7bb9">AMEX</span> アメリカン・エキスプレス</h3>
+        <div class="desc">XLSXファイル（activity_*.xlsx）<br>「ご利用履歴」シートの明細を取り込みます</div>
+        <label class="file-btn">ファイルを選択<input type="file" accept=".xlsx,.xls" onchange="importAmex(this)"></label>
+        <div id="status-amex"></div>
+      </div>
+
+      <!-- GMO -->
+      <div class="card">
+        <h3><span class="badge" style="background:#e8a020">GMO</span> GMOあおぞらネット銀行</h3>
+        <div class="desc">CSVファイル（statement_*.csv）<br>Shift-JIS形式に対応しています</div>
+        <label class="file-btn">ファイルを選択<input type="file" accept=".csv" onchange="importGMO(this)"></label>
+        <div id="status-gmo"></div>
+      </div>
+
+      <!-- 本部経費 -->
+      <div class="card">
+        <h3><span class="badge" style="background:#059669">経費</span> 本部経費ファイル</h3>
+        <div class="desc">XLSXファイル（本部_経費_*.xlsx）<br>シートを選んで取り込みます（銀行・小口両対応）</div>
+        <label class="file-btn">ファイルを選択<input type="file" accept=".xlsx,.xls" onchange="loadHonbuSheets(this)"></label>
+        <div class="sheet-select-area" id="honbu-sheet-area">
+          <select id="honbu-sheet-sel"></select>
+          <button class="btn btn-blue" onclick="importHonbu()">このシートを取り込む</button>
+          <button class="btn btn-gray" onclick="importHonbuAll()" style="margin-left:4px">全シート一括</button>
+        </div>
+        <div id="status-honbu"></div>
+      </div>
+
+      <!-- エネフリ -->
+      <div class="card">
+        <h3><span class="badge" style="background:#dc2626">燃料</span> エネフリ 利用料金一覧</h3>
+        <div class="desc">XLSXファイル（エネフリ_*.xlsx）<br>スタッフ×月別の燃料費を取り込みます</div>
+        <div class="fg" style="margin-bottom:8px">
+          <label>対象年</label>
+          <input type="number" id="enefree-year" value="2025" style="width:100px">
+        </div>
+        <label class="file-btn">ファイルを選択<input type="file" accept=".xlsx,.xls" onchange="importEnefree(this)"></label>
+        <div id="status-enefree"></div>
+      </div>
+
+      <!-- 信用金庫 -->
+      <div class="card" style="grid-column:1/-1">
+        <h3><span class="badge" style="background:#7c3aed">信金</span> 横浜信用金庫（スキャンPDF）</h3>
+        <div class="info-box">PDFはスキャン画像のため自動読み取りができません。<br>
+        通帳の内容をCSV形式（日付,摘要,お支払金額,お預り金額）でここに貼り付けるか、下の一括入力フォームを使ってください。</div>
+
+        <div style="margin-bottom:10px">
+          <textarea id="shinkin-paste" rows="8" style="width:100%;border:1px solid #ddd;border-radius:6px;padding:8px;font-size:13px;font-family:monospace"
+            placeholder="例（カンマ区切り、ヘッダー行不要）:&#10;2026/01/19,口座振替,205000,&#10;2026/01/22,口座振替 NSS.シヤロウシ,113761,&#10;2026/02/05,口座振替 UCカード,44535,&#10;2026/02/09,お利息,,2347"></textarea>
+        </div>
+        <button class="btn btn-blue" onclick="importShinkin()">貼り付けデータを取り込む</button>
+        <div id="status-shinkin"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ===== 手動入力 ===== -->
+<div id="tab-manual" class="tab-content">
+  <div class="container">
+    <div class="card">
+      <h2>経費を手動追加</h2>
+      <div class="form-row">
+        <div class="fg"><label>日付</label><input type="date" id="m-date"></div>
+        <div class="fg"><label>ソース</label>
+          <select id="m-source">
+            <option>手動</option><option>アメックス</option><option>GMOあおぞら</option>
+            <option>本部経費</option><option>エネフリ</option><option>横浜信金</option>
+          </select>
+        </div>
+        <div class="fg"><label>科目</label><input type="text" id="m-cat" placeholder="旅費交通費" style="width:130px"></div>
+        <div class="fg"><label>支払先</label><input type="text" id="m-payee" placeholder="支払先" style="width:150px"></div>
+        <div class="fg"><label>摘要</label><input type="text" id="m-desc" placeholder="内容" style="width:180px"></div>
+        <div class="fg"><label>入金 (円)</label><input type="number" id="m-income" placeholder="0" style="width:110px" min="0"></div>
+        <div class="fg"><label>出金 (円)</label><input type="number" id="m-expense" placeholder="0" style="width:110px" min="0"></div>
+        <div class="fg"><label>メモ</label><input type="text" id="m-note" placeholder="任意" style="width:140px"></div>
+        <button class="btn btn-blue" onclick="manualAdd()" style="align-self:flex-end">追加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// Data
+// ============================================================
+let DATA = JSON.parse(localStorage.getItem('exp_unified') || '[]');
+let HONBU_WB = null; // stored workbook for sheet selection
+
+const SRC_COLOR = {
+  'アメックス': '#1a7bb9',
+  'GMOあおぞら': '#d97706',
+  '本部経費': '#059669',
+  '本部経費(小口)': '#10b981',
+  'エネフリ': '#dc2626',
+  '横浜信金': '#7c3aed',
+  '手動': '#6b7280'
+};
+
+function save() { localStorage.setItem('exp_unified', JSON.stringify(DATA)); }
+
+// ============================================================
+// Helpers
+// ============================================================
+function xlDate(n) {
+  if (!n || typeof n !== 'number') return '';
+  const d = new Date(Math.round((n - 25569) * 86400000));
+  return d.toISOString().slice(0, 10);
+}
+function normalizeDate(d) {
+  if (!d) return '';
+  if (typeof d === 'number') return xlDate(d);
+  return String(d).replace(/\//g, '-').slice(0, 10);
+}
+function parseNum(v) {
+  if (v === '' || v === null || v === undefined) return 0;
+  const n = parseInt(String(v).replace(/[,，\s]/g, ''), 10);
+  return isNaN(n) ? 0 : Math.abs(n);
+}
+function esc(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function parseCSVLine(line) {
+  const r=[]; let cur='', inQ=false;
+  for (let i=0;i<line.length;i++) {
+    const c=line[i];
+    if (c==='"') { if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ; }
+    else if (c===','&&!inQ) { r.push(cur); cur=''; }
+    else cur+=c;
+  }
+  r.push(cur);
+  return r;
+}
+function uid() { return Date.now() + Math.random(); }
+function setStatus(id, msg, type='ok') {
+  const el=document.getElementById(id);
+  el.innerHTML=`<div class="status ${type}">${msg}</div>`;
+}
+
+// ============================================================
+// Importers
+// ============================================================
+
+// --- アメックス ---
+async function importAmex(input) {
+  try {
+    const file = input.files[0]; if (!file) return;
+    const ab = await file.arrayBuffer();
+    const wb = XLSX.read(ab);
+    const ws = wb.Sheets['ご利用履歴'];
+    if (!ws) throw new Error('「ご利用履歴」シートが見つかりません');
+
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    // find header row
+    let hi = rows.findIndex(r => String(r[0]).includes('ご利用日'));
+    if (hi < 0) hi = 6;
+
+    const entries = [];
+    for (let i = hi+1; i < rows.length; i++) {
+      const r = rows[i];
+      const date = normalizeDate(r[0]);
+      const desc = String(r[2] || '').trim();
+      const amount = parseNum(r[3]);
+      if (!date || !desc || !amount) continue;
+      entries.push({ id:uid(), date, source:'アメックス', category:'未分類',
+        payee:desc, description:'', income:0, expense:amount, note:'' });
+    }
+    addEntries(entries);
+    setStatus('status-amex', `✓ ${entries.length}件 取り込みました`, 'ok');
+  } catch(e) { setStatus('status-amex', '❌ ' + e.message, 'err'); }
+  input.value='';
+}
+
+// --- GMOあおぞら ---
+async function importGMO(input) {
+  try {
+    const file = input.files[0]; if (!file) return;
+    const buffer = await file.arrayBuffer();
+    let text;
+    try {
+      text = new TextDecoder('shift-jis').decode(buffer);
+    } catch(e) {
+      text = new TextDecoder('utf-8').decode(buffer);
+    }
+
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    const entries = [];
+    // skip header (first line)
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i]);
+      const dateStr = cols[0].replace(/"/g,'').trim();
+      if (!/^\d{8}$/.test(dateStr)) continue;
+
+      const date = `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`;
+      const desc = (cols[1]||'').replace(/"/g,'').trim();
+      const income  = parseNum(cols[2]);
+      const expense = parseNum(cols[3]);
+      const note    = (cols[5]||'').replace(/"/g,'').trim();
+      if (!income && !expense) continue;
+
+      entries.push({ id:uid(), date, source:'GMOあおぞら', category:'未分類',
+        payee:desc, description:'', income, expense, note });
+    }
+    addEntries(entries);
+    setStatus('status-gmo', `✓ ${entries.length}件 取り込みました`, 'ok');
+  } catch(e) { setStatus('status-gmo', '❌ ' + e.message, 'err'); }
+  input.value='';
+}
+
+// --- 本部経費 シートロード ---
+async function loadHonbuSheets(input) {
+  try {
+    const file = input.files[0]; if (!file) return;
+    const ab = await file.arrayBuffer();
+    HONBU_WB = XLSX.read(ab);
+    const sel = document.getElementById('honbu-sheet-sel');
+    sel.innerHTML = HONBU_WB.SheetNames.map(s => `<option>${s}</option>`).join('');
+    document.getElementById('honbu-sheet-area').style.display = 'block';
+    setStatus('status-honbu', `シート ${HONBU_WB.SheetNames.length}枚 読み込みました。取り込むシートを選択してください`, 'info');
+  } catch(e) { setStatus('status-honbu', '❌ ' + e.message, 'err'); }
+}
+
+function parseHonbuSheet(sheetName) {
+  if (!HONBU_WB) return [];
+  const ws = HONBU_WB.Sheets[sheetName];
+  if (!ws) return [];
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+  const entries = [];
+
+  // 左側：銀行 cols 0-6
+  for (let i = 2; i < rows.length; i++) {
+    const r = rows[i];
+    const rawDate = r[0];
+    if (!rawDate || typeof rawDate !== 'number') continue;
+    const date = xlDate(rawDate);
+    if (!date) continue;
+    const cat     = String(r[1]||'').trim();
+    const payee   = String(r[2]||'').trim();
+    const desc    = String(r[3]||'').trim();
+    const income  = parseNum(r[4]);
+    const expense = parseNum(r[5]);
+    if (!income && !expense) continue;
+    entries.push({ id:uid(), date, source:'本部経費', category:cat||'未分類',
+      payee, description:desc, income, expense, note:sheetName });
+  }
+
+  // 右側：小口 cols 8-14
+  for (let i = 2; i < rows.length; i++) {
+    const r = rows[i];
+    const rawDate = r[8];
+    if (!rawDate || typeof rawDate !== 'number') continue;
+    const date = xlDate(rawDate);
+    if (!date) continue;
+    const cat     = String(r[9]||'').trim();
+    const payee   = String(r[10]||'').trim();
+    const desc    = String(r[11]||'').trim();
+    const income  = parseNum(r[12]);
+    const expense = parseNum(r[13]);
+    if (!income && !expense) continue;
+    entries.push({ id:uid(), date, source:'本部経費(小口)', category:cat||'未分類',
+      payee, description:desc, income, expense, note:sheetName });
+  }
+
+  return entries;
+}
+
+function importHonbu() {
+  try {
+    const sh = document.getElementById('honbu-sheet-sel').value;
+    const entries = parseHonbuSheet(sh);
+    if (!entries.length) { setStatus('status-honbu', '⚠ データが見つかりませんでした', 'err'); return; }
+    addEntries(entries);
+    setStatus('status-honbu', `✓ [${sh}] ${entries.length}件 取り込みました`, 'ok');
+  } catch(e) { setStatus('status-honbu', '❌ ' + e.message, 'err'); }
+}
+
+function importHonbuAll() {
+  try {
+    if (!HONBU_WB) return;
+    let total = 0;
+    for (const sh of HONBU_WB.SheetNames) {
+      const entries = parseHonbuSheet(sh);
+      addEntries(entries);
+      total += entries.length;
+    }
+    setStatus('status-honbu', `✓ 全${HONBU_WB.SheetNames.length}シート / ${total}件 取り込みました`, 'ok');
+  } catch(e) { setStatus('status-honbu', '❌ ' + e.message, 'err'); }
+}
+
+// --- エネフリ ---
+async function importEnefree(input) {
+  try {
+    const file = input.files[0]; if (!file) return;
+    const year = parseInt(document.getElementById('enefree-year').value) || 2025;
+    const ab = await file.arrayBuffer();
+    const wb = XLSX.read(ab);
+    const sheetName = wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+    // header row 0: 部署,カードNo,車両No,スタッフ,月1,月2,...
+    const header = rows[0];
+    // find month columns (numeric or contains "月")
+    const monthCols = [];
+    for (let c = 4; c < header.length; c++) {
+      const h = String(header[c]);
+      const m = h.match(/(\d+)月/);
+      if (m) monthCols.push({ col: c, month: parseInt(m[1]) });
+      else if (h === '' && monthCols.length > 0) break;
+    }
+
+    const entries = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const dept   = String(r[0]||'').trim();
+      const staff  = String(r[3]||'').trim();
+      const carNum = String(r[2]||'').trim();
+      if (!staff || staff.includes('合計') || staff.includes('未使用')) continue;
+
+      for (const {col, month} of monthCols) {
+        const amt = parseNum(r[col]);
+        if (!amt) continue;
+        const mm = String(month).padStart(2,'0');
+        const date = `${year}-${mm}-01`;
+        entries.push({ id:uid(), date, source:'エネフリ', category:'燃料費',
+          payee:staff, description:`${dept} ${carNum}`.trim(),
+          income:0, expense:amt, note:`${year}年${month}月` });
+      }
+    }
+    addEntries(entries);
+    setStatus('status-enefree', `✓ ${entries.length}件 取り込みました`, 'ok');
+  } catch(e) { setStatus('status-enefree', '❌ ' + e.message, 'err'); }
+  input.value='';
+}
+
+// --- 横浜信金 ---
+function importShinkin() {
+  try {
+    const text = document.getElementById('shinkin-paste').value.trim();
+    if (!text) { setStatus('status-shinkin', '⚠ データが空です', 'err'); return; }
+
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    const entries = [];
+
+    for (const line of lines) {
+      const cols = parseCSVLine(line);
+      if (cols.length < 2) continue;
+
+      // date: YYYY/MM/DD or YY.MM.DD or YYYY-MM-DD
+      let dateStr = cols[0].replace(/"/g,'').trim();
+      // handle YY.MM.DD format
+      if (/^\d{2}\.\d{2}\.\d{2}$/.test(dateStr)) {
+        const parts = dateStr.split('.');
+        dateStr = `20${parts[0]}-${parts[1]}-${parts[2]}`;
+      } else {
+        dateStr = dateStr.replace(/\//g,'-').slice(0,10);
+      }
+
+      const desc    = (cols[1]||'').replace(/"/g,'').trim();
+      const expense = parseNum(cols[2]);
+      const income  = parseNum(cols[3]);
+      if (!desc) continue;
+
+      entries.push({ id:uid(), date:dateStr, source:'横浜信金', category:'未分類',
+        payee:desc, description:'', income, expense, note:'' });
+    }
+
+    addEntries(entries);
+    document.getElementById('shinkin-paste').value = '';
+    setStatus('status-shinkin', `✓ ${entries.length}件 取り込みました`, 'ok');
+  } catch(e) { setStatus('status-shinkin', '❌ ' + e.message, 'err'); }
+}
+
+// --- 手動 ---
+function manualAdd() {
+  const date    = document.getElementById('m-date').value;
+  const source  = document.getElementById('m-source').value;
+  const cat     = document.getElementById('m-cat').value.trim();
+  const payee   = document.getElementById('m-payee').value.trim();
+  const desc    = document.getElementById('m-desc').value.trim();
+  const income  = parseNum(document.getElementById('m-income').value);
+  const expense = parseNum(document.getElementById('m-expense').value);
+  const note    = document.getElementById('m-note').value.trim();
+
+  if (!date) { alert('日付を入力してください'); return; }
+  if (!income && !expense) { alert('入金か出金を入力してください'); return; }
+
+  addEntries([{ id:uid(), date, source, category:cat||'未分類', payee, description:desc, income, expense, note }]);
+
+  ['m-income','m-expense','m-payee','m-desc','m-note'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('m-date').value = new Date().toISOString().slice(0,10);
+}
+
+// ============================================================
+// Data management
+// ============================================================
+function addEntries(entries) {
+  DATA = DATA.concat(entries);
+  DATA.sort((a,b) => b.date.localeCompare(a.date));
+  save();
+  updateFilters();
+  render();
+}
+
+function deleteEntry(id) {
+  DATA = DATA.filter(d => d.id !== id);
+  save();
+  updateFilters();
+  render();
+}
+
+function clearAll() {
+  if (!confirm('全データを削除しますか？')) return;
+  DATA = [];
+  save();
+  updateFilters();
+  render();
+}
+
+// ============================================================
+// Filters & Render
+// ============================================================
+function getFiltered() {
+  const src    = document.getElementById('f-source').value;
+  const month  = document.getElementById('f-month').value;
+  const cat    = document.getElementById('f-cat').value;
+  const search = document.getElementById('f-search').value.toLowerCase();
+
+  return DATA.filter(d => {
+    if (src   && d.source !== src)                          return false;
+    if (month && !d.date.startsWith(month))                 return false;
+    if (cat   && d.category !== cat)                        return false;
+    if (search && !(d.payee + d.description + d.note).toLowerCase().includes(search)) return false;
+    return true;
+  });
+}
+
+function updateFilters() {
+  const sources = [...new Set(DATA.map(d => d.source))].sort();
+  const months  = [...new Set(DATA.map(d => d.date.slice(0,7)))].sort().reverse();
+  const cats    = [...new Set(DATA.map(d => d.category))].sort();
+
+  const sel = (id, opts, cur) => {
+    const el = document.getElementById(id);
+    const prev = el.value;
+    el.innerHTML = `<option value="">${cur}</option>` + opts.map(o=>`<option value="${esc(o)}" ${o===prev?'selected':''}>${esc(o)}</option>`).join('');
+  };
+  sel('f-source', sources, '全ソース');
+  sel('f-month',  months,  '全期間');
+  sel('f-cat',    cats,    '全カテゴリ');
+}
+
+function render() {
+  const rows = getFiltered();
+  renderSummary(rows);
+  renderTable(rows);
+}
+
+function renderSummary(rows) {
+  const totalIn  = rows.reduce((s,d) => s + d.income, 0);
+  const totalOut = rows.reduce((s,d) => s + d.expense, 0);
+  const bySrc    = {};
+  for (const d of rows) bySrc[d.source] = (bySrc[d.source]||0) + d.expense;
+
+  let html = `
+    <div class="sum-card" style="border-left-color:#059669">
+      <div class="lbl">入金合計</div>
+      <div class="val" style="color:#059669">¥${totalIn.toLocaleString()}</div>
+    </div>
+    <div class="sum-card" style="border-left-color:#dc2626">
+      <div class="lbl">出金合計</div>
+      <div class="val" style="color:#dc2626">¥${totalOut.toLocaleString()}</div>
+    </div>
+    <div class="sum-card" style="border-left-color:#6366f1">
+      <div class="lbl">件数</div>
+      <div class="val" style="color:#6366f1">${rows.length.toLocaleString()}件</div>
+    </div>`;
+
+  for (const [src, amt] of Object.entries(bySrc).sort((a,b)=>b[1]-a[1])) {
+    const c = SRC_COLOR[src] || '#888';
+    html += `<div class="sum-card" style="border-left-color:${c}">
+      <div class="lbl">${esc(src)}</div>
+      <div class="val" style="color:${c};font-size:16px">¥${amt.toLocaleString()}</div>
+    </div>`;
+  }
+  document.getElementById('summary-row').innerHTML = html;
+}
+
+function renderTable(rows) {
+  const tbody = document.getElementById('tbody');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">データがありません。「インポート」タブからファイルを取り込んでください。</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(d => {
+    const c = SRC_COLOR[d.source] || '#888';
+    return `<tr>
+      <td style="white-space:nowrap">${d.date}</td>
+      <td><span class="source-chip" style="background:${c}">${esc(d.source)}</span></td>
+      <td>${esc(d.category)}</td>
+      <td>${esc(d.payee)}</td>
+      <td style="color:#667">${esc(d.description)}</td>
+      <td class="num income">${d.income ? '¥'+d.income.toLocaleString() : ''}</td>
+      <td class="num expense">${d.expense ? '¥'+d.expense.toLocaleString() : ''}</td>
+      <td style="color:#999;font-size:12px">${esc(d.note)}</td>
+      <td><button class="btn btn-red" onclick="deleteEntry(${d.id})">削除</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ============================================================
+// Export
+// ============================================================
+function exportCSV() {
+  const rows = getFiltered();
+  if (!rows.length) { alert('データがありません'); return; }
+
+  const header = ['日付','ソース','科目','支払先','摘要','入金','出金','メモ'];
+  const body = rows.map(d => [d.date, d.source, d.category, d.payee, d.description, d.income||'', d.expense||'', d.note]);
+
+  const csv = [header, ...body]
+    .map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(','))
+    .join('\r\n');
+
+  const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `経費統合_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ============================================================
+// Tabs
+// ============================================================
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  const idx = {view:0, import:1, manual:2}[name];
+  document.querySelectorAll('.tab')[idx].classList.add('active');
+  document.getElementById(`tab-${name}`).classList.add('active');
+}
+
+// ============================================================
+// Init
+// ============================================================
+document.getElementById('m-date').value = new Date().toISOString().slice(0,10);
+updateFilters();
+render();
+
+// XLSX ロード確認
+window.addEventListener('load', () => {
+  if (typeof XLSX === 'undefined') {
+    document.querySelectorAll('.import-box, .card').forEach(el => {
+      const note = document.createElement('div');
+      note.style.cssText = 'background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:8px;font-size:12px;margin-top:8px;color:#92400e';
+      note.textContent = '⚠ XLSXライブラリの読み込みに失敗しました。インターネット接続を確認してください。';
+      el.appendChild(note);
+    });
+  }
+});
+</script>
+</body>
+</html>

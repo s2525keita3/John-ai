@@ -1,0 +1,28 @@
+---
+description: 訪問件数仕分けアプリのコード変更時に、ローカル確認・GitHub・Streamlit Cloud の更新手順を必ず提案する
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# 変更・修正時の提案（必須）
+
+このリポジトリ内の Python（`app.py` / `report_parser.py` / `service_fees.py` など）を**編集・追加・修正したあと**、または変更内容をまとめるときは、ユーザーに次の**更新フローを短く提案する**こと。
+
+1. **ローカル確認**  
+   `訪問件数仕分けアプリ` をカレントにして  
+   `streamlit run app.py` で動作を確認する。
+
+2. **GitHub へ反映**  
+   ```text
+   git add -A
+   git commit -m "（変更の要約）"
+   git push
+   ```
+   （`main` ブランチ想定）
+
+3. **Streamlit Cloud**  
+   GitHub に push するとデプロイが自動で更新されることが多い。`share.streamlit.io` の My apps で状態を確認。
+
+**依存追加時**は `requirements.txt` も必ず更新し、同じく commit / push する。
+
+仕様を大きく変えた場合は `要件定義書.md` や `VERSION` の更新を提案してよい。

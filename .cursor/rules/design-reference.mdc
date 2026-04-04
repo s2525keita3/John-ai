@@ -1,0 +1,10 @@
+---
+description: UI・デザイン作業時は awesome-design-md と DESIGN.md を先に参照する（John_ai 全体）
+alwaysApply: true
+---
+
+# デザイン参照（John_ai）
+
+- **新規の UI / 画面レイアウト / スタイル変更**（Streamlit、Web、CSS、コンポーネントの見た目）を行う前に、ワークスペース直下の **`DESIGN.md`** を読み、そこに書いた手順に従うこと。
+- デザインシステムの素材は **[awesome-design-md](https://github.com/VoltAgent/awesome-design-md)**（`design-md` 内の各サイト `DESIGN.md`）を**第一参照**とする。トーンに合うフォルダを選び、その `DESIGN.md` をプロジェクトに取り込んでから、色・タイポ・余白・コンポーネント規則に沿って実装する。
+- ロジックのみの修正で見た目を変えない場合は、このルールを無理に適用しなくてよい。

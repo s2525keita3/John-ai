@@ -1,0 +1,7 @@
+streamlit>=1.29
+pandas>=2.0
+pdfplumber
+pymupdf
+pypdfium2
+altair
+openpyxl
