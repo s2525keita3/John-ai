@@ -9,12 +9,31 @@ import pandas as pd
 
 
 def read_csv_auto(file_bytes: bytes) -> pd.DataFrame:
-    """utf-8-sig → cp932 → utf-8 の順で試す（あおぞらは cp932 が多い）"""
+    """
+    複数エンコーディングを試す（日本語CSVは cp932 / UTF-8 / UTF-16 など混在しがち）。
+    最後に latin-1 で読む（常にデコード可能・文字化けの可能性あり）。
+    """
+    encodings = (
+        "utf-8-sig",
+        "utf-8",
+        "cp932",
+        "euc-jp",
+        "iso2022_jp",
+        "utf-16",
+        "utf-16-le",
+        "utf-16-be",
+    )
     last_err: Exception | None = None
-    for enc in ("utf-8-sig", "cp932", "utf-8"):
+    bio = io.BytesIO(file_bytes)
+    for enc in encodings:
         try:
-            return pd.read_csv(io.BytesIO(file_bytes), encoding=enc)
-        except UnicodeDecodeError as e:
+            bio.seek(0)
+            return pd.read_csv(bio, encoding=enc)
+        except (UnicodeDecodeError, UnicodeError) as e:
             last_err = e
             continue
-    raise last_err or UnicodeDecodeError("read", b"", 0, 0, "unknown encoding")
+    try:
+        bio.seek(0)
+        return pd.read_csv(bio, encoding="latin-1")
+    except Exception:
+        raise last_err or UnicodeDecodeError("read", b"", 0, 0, "unknown encoding")

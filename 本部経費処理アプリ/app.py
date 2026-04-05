@@ -536,6 +536,13 @@ with tab2:
                 ):
                     tx_df = read_yokohama_bank_excel(raw)
                 else:
+                    if len(raw) >= 4 and raw[:4] == b"%PDF":
+                        st.error(
+                            "アップロードされたのは **PDF** です。エネクスフリートの請求書のときは、"
+                            "左のフォーマットで **エネクスフリート（請求書PDF・本部カード0001〜0004）** "
+                            "を選んでから、もう一度「振り分けを実行」してください。"
+                        )
+                        st.stop()
                     tx_df = read_csv_auto(raw)
             except Exception as e:
                 st.error(f"ファイルの読み込みに失敗しました: {e}")
