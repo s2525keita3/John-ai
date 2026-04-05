@@ -33,10 +33,10 @@ from payroll_hq import (
     load_payroll_matrix,
 )
 from result_display_hide import should_hide_from_main_display
-from amazon_aozora_reconcile import (
-    build_amazon_payment_table,
-    filter_bank_visa_debit_rows,
-    match_amazon_to_bank,
+from reconcile_expander_ui import (
+    AMAZON_JP_HOME_URL,
+    ASKUL_HOME_URL,
+    render_amazon_askul_aozora_reconcile_expander,
 )
 
 _ROOT = Path(__file__).resolve().parent
@@ -52,9 +52,6 @@ HALKA_SPREADSHEET_URL = (
 GMO_AOZORA_BANK_URL = "https://bank.gmo-aozora.com/"
 MONEYFORWARD_BIZ_PAY_HOME_URL = "https://biz-pay.moneyforward.com/home"
 
-# Amazon（注文確認・注文履歴の取得）
-AMAZON_JP_HOME_URL = "https://www.amazon.co.jp/?ref_=abn_logo"
-
 # マネフォクラウド「カード利用明細」CSV（公式列 or 旧アメックス activity 互換）
 _PRESET_MF_CARD = "マネフォカード（利用明細CSV）"
 
@@ -66,35 +63,6 @@ _HALF_AMOUNT_SUMMARY_MARKERS: tuple[str, ...] = (
 
 # 支給控除一覧：氏名行の列見出しに含まれるキーワードで本部対象列を特定
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
-
-# Amazon×あおぞら照合: メインの expander 内ファイル欄だけ大きなドロップゾーンにする（サイドバーは対象外）
-_AMAZON_RECONCILE_DROPZONE_CSS = """
-<style>
-[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stFileUploaderDropzone"] {
-    min-height: 168px !important;
-    padding: 1.1rem 1rem !important;
-    align-items: center !important;
-    justify-content: center !important;
-    border: 2px dashed rgba(71, 85, 119, 0.4) !important;
-    border-radius: 12px !important;
-    background: linear-gradient(165deg, #f8fafc 0%, #eef2f7 100%) !important;
-    box-sizing: border-box !important;
-    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-}
-[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stFileUploaderDropzone"]:hover {
-    border-color: rgba(37, 99, 235, 0.55) !important;
-    background: #f5f9ff !important;
-    box-shadow: 0 1px 8px rgba(37, 99, 235, 0.08);
-}
-[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stFileUploader"] {
-    width: 100% !important;
-}
-[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stFileUploader"] section {
-    gap: 0.35rem !important;
-}
-</style>
-"""
-
 
 def _normalize_halka_master_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """空欄だらけの列が float 推論され data_editor と衝突するのを防ぐ。"""
@@ -319,7 +287,7 @@ st.caption(
 with st.container(border=True):
     st.markdown("##### halka 用スプレッドシート（入力・計上先）")
     st.caption("振分結果を反映したり、本部経費をまとめるときは、まずここを開いてください。")
-    _lk1, _lk2 = st.columns(2)
+    _lk1, _lk2, _lk3 = st.columns(3)
     with _lk1:
         st.link_button(
             "Google スプレッドシートを開く",
@@ -331,6 +299,12 @@ with st.container(border=True):
         st.link_button(
             "Amazon.co.jp を開く（注文履歴の取得など）",
             AMAZON_JP_HOME_URL,
+            use_container_width=True,
+        )
+    with _lk3:
+        st.link_button(
+            "アスクル（公式）を開く（購入履歴 CSV）",
+            ASKUL_HOME_URL,
             use_container_width=True,
         )
 
@@ -490,93 +464,7 @@ with tab1:
         key="tx",
     )
 
-    with st.expander("Amazon × あおぞら 照合（任意）", expanded=True):
-        st.caption(
-            "**法人向け注文履歴**と**口座明細**を、**金額が一致**し、"
-            "**Amazon の支払い確定日**と**口座の日付**が **±2 日**以内なら同一とみなします。"
-            " 照合の金額は CSV の **支払い金額**（分割カード決済ごと）です。"
-            " **注文の合計（税込）**は注文全体の合計のため、口座の各引落としとは一致しません。"
-            " **支払認証ID/請求書番号** があると、同一注文内の複数回引落としを区別できます。"
-            " 口座は **出金がある行**のみ対象です。"
-        )
-        st.link_button(
-            "Amazon.co.jp を開く（注文履歴のダウンロード）",
-            AMAZON_JP_HOME_URL,
-            use_container_width=True,
-        )
-        st.markdown(_AMAZON_RECONCILE_DROPZONE_CSS, unsafe_allow_html=True)
-        with st.container(border=True):
-            _zu_l, _zu_r = st.columns(2, gap="large")
-            with _zu_l:
-                st.markdown("##### Amazon 注文履歴")
-                st.caption("CSV をここにドラッグ＆ドロップ、または枠内をクリック")
-                up_amazon_orders = st.file_uploader(
-                    "Amazon 注文履歴 CSV",
-                    type=["csv"],
-                    key="up_amazon_orders",
-                    label_visibility="collapsed",
-                    help="法人アカウントの注文履歴レポート（支払い確定日・支払い金額・商品名 など）",
-                )
-            with _zu_r:
-                st.markdown("##### あおぞら口座明細")
-                st.caption("CSV をここにドラッグ＆ドロップ、または枠内をクリック")
-                up_aozora_match = st.file_uploader(
-                    "あおぞら口座明細 CSV",
-                    type=["csv"],
-                    key="up_aozora_match",
-                    label_visibility="collapsed",
-                    help="あおぞら標準（日付・出金金額／出金額 など）で可。出金のある行が照合対象です。",
-                )
-        run_amazon_match = st.button("照合を実行", type="primary", key="run_amazon_match")
-
-        if run_amazon_match:
-            if up_amazon_orders is None or up_aozora_match is None:
-                st.error("Amazon 注文履歴とあおぞら明細の両方をアップロードしてください。")
-            else:
-                try:
-                    raw_a = up_amazon_orders.getvalue()
-                    raw_b = up_aozora_match.getvalue()
-                    df_a = read_csv_auto(raw_a)
-                    df_b = read_csv_auto(raw_b)
-                    amz_tbl = build_amazon_payment_table(df_a)
-                    bank_debits = filter_bank_visa_debit_rows(df_b)
-                    matched, bank_only, amz_only = match_amazon_to_bank(
-                        amz_tbl,
-                        bank_debits,
-                        date_tolerance_days=2,
-                    )
-                    st.subheader("照合結果（一致）")
-                    if matched.empty:
-                        st.info("条件に一致する組み合わせがありませんでした。")
-                    else:
-                        st.dataframe(matched, width="stretch", hide_index=True)
-                        st.download_button(
-                            "照合結果をCSVダウンロード",
-                            data=matched.to_csv(index=False).encode("utf-8-sig"),
-                            file_name=f"Amazon口座照合_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                            key="dl_amazon_match",
-                        )
-                    cbo, cam = st.columns(2)
-                    with cbo:
-                        st.markdown("**口座側のみ（未照合）**")
-                        if bank_only.empty:
-                            st.caption("なし")
-                        else:
-                            _bo = bank_only.drop(
-                                columns=["_bank_date", "_out"], errors="ignore"
-                            )
-                            st.dataframe(_bo, width="stretch", hide_index=True)
-                    with cam:
-                        st.markdown("**Amazon 側のみ（未照合）**")
-                        if amz_only.empty:
-                            st.caption("なし")
-                        else:
-                            show_amz = amz_only.drop(
-                                columns=["_ad", "_am"], errors="ignore"
-                            )
-                            st.dataframe(show_amz, width="stretch", hide_index=True)
-                except Exception as e:
-                    st.error(f"照合に失敗しました: {e}")
+    render_amazon_askul_aozora_reconcile_expander()
 
     st.divider()
     run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -444,6 +445,18 @@ with tab1:
         type=["csv", "pdf", "xlsx", "xlsm"],
         key="tx",
     )
+    # halka_ai と同じ Amazon／アスクル×あおぞら照合（リポジトリに halka_ai があるときのみ表示）
+    _halka_dir = _ROOT.parent / "halka_ai"
+    if _halka_dir.is_dir():
+        _halp = str(_halka_dir.resolve())
+        if _halp not in sys.path:
+            sys.path.insert(0, _halp)
+        try:
+            from reconcile_expander_ui import render_amazon_askul_aozora_reconcile_expander
+
+            render_amazon_askul_aozora_reconcile_expander(key_prefix="honbu_keihi_")
+        except ImportError:
+            pass
     st.divider()
     run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")
 
