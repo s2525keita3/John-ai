@@ -255,10 +255,16 @@ with st.container(border=True):
         type="primary",
     )
 
-if "halka_master_work" not in st.session_state:
+# ディスク上の halka_master.csv が更新されたら再読込（session_state が古いマスタのまま残るのを防ぐ）
+_halka_master_mtime = _HALKA_MASTER_CSV.stat().st_mtime if _HALKA_MASTER_CSV.is_file() else 0.0
+if (
+    "halka_master_loaded_mtime" not in st.session_state
+    or st.session_state.halka_master_loaded_mtime != _halka_master_mtime
+):
     st.session_state.halka_master_work = _normalize_halka_master_dataframe(
         pd.read_csv(_HALKA_MASTER_CSV, encoding="utf-8-sig")
     )
+    st.session_state.halka_master_loaded_mtime = _halka_master_mtime
 
 with st.sidebar:
     st.subheader("取引CSVの列名")

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
@@ -86,6 +87,16 @@ def _expense_amount(row: pd.Series) -> float:
     return 0.0
 
 
+def _normalize_match_text(s: str) -> str:
+    """
+    摘要とキーワードの部分一致用。半角ｶﾅ→全角・全角英数の統一に加え、
+    あおぞら摘要で混在しがちな「－」(U+FF0D) を長音「ー」(U+30FC) に寄せる。
+    """
+    t = unicodedata.normalize("NFKC", (s or "").strip())
+    t = t.replace("\uff0d", "\u30fc")
+    return t
+
+
 def classify_row(
     summary: str,
     amount: float,
@@ -96,19 +107,19 @@ def classify_row(
     最初にマッチしたルールで判定（複数マッチ時は表の上から優先）。
     返り値: (分類, PL項目名, マッチしたマスタ行)
     """
-    summary_norm = summary.strip()
+    summary_norm = _normalize_match_text(summary)
     candidates: list[MasterRow] = []
     for m in master:
         if source_filter and m.source and m.source != source_filter:
             continue
-        if m.keyword in summary_norm:
+        if _normalize_match_text(m.keyword) in summary_norm:
             candidates.append(m)
 
     if not candidates:
         return "判断不能", None, None
 
     # 長いキーワードを優先（「アマゾン」より「アマゾンサービシーズインターナショナル」）
-    candidates.sort(key=lambda m: len(m.keyword), reverse=True)
+    candidates.sort(key=lambda m: (-len(m.keyword), m.keyword))
 
     def _in_range(m: MasterRow) -> bool:
         lo = m.amount_min if m.amount_min is not None else float("-inf")
