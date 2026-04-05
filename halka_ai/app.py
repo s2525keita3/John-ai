@@ -64,14 +64,9 @@ _HALF_AMOUNT_SUMMARY_MARKERS: tuple[str, ...] = (
     "APアプラス",
 )
 
-# 支給控除一覧：氏名行の列見出しに含まれるキーワードで本部対象列を特定（部門別表でないとき）
+# 支給控除一覧：部門別表でないとき、氏名行の列見出しに含まれるキーワードで本部対象列を特定（UIは出さず既定のまま使用）
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
 
-# 部門別一覧（従業員番号行あり）のときの halka 本部 — payroll_hq.HALKA_HQ_EMPLOYEE_CODES と揃える
-_HALKA_HQ_RULE_CAPTION = (
-    "**halka 本部の扱い:** 従業員番号 **001（加藤 彼方）** と **002（中川 大介）** の列のみを本部として集計します。"
-    " **【訪問看護】【居宅】【全社計】** の列は同じ行項目（支給合計・各社保会社負担・人件費合計）で横に並べて表示します。"
-)
 
 def _normalize_halka_master_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """空欄だらけの列が float 推論され data_editor と衝突するのを防ぐ。"""
@@ -811,22 +806,10 @@ with tab1:
 
 with tab2:
     st.markdown("### 支給控除の読み込み・本部人件費")
-    st.caption(
-        "「支給合計」＋会社負担社保（健康・介護・厚生・子ども・子育て）を **人件費(支給額,健康,介護,厚生,子ども)** に集計します。"
-        " **部門別一覧（従業員番号・従業員の2行ヘッダ）** のときは halka ルール（001・002＝本部、訪問看護／居宅／全社計と並列表示）を使います。"
-        " それ以外は **表の1行目** を氏名・列見出し行としてキーワード照合します。"
-    )
     payroll_file = st.file_uploader(
         "支給控除一覧表（xlsx または csv）",
         type=["xlsx", "xlsm", "csv"],
         key="payroll",
-    )
-    hq_selected = st.multiselect(
-        "本部の対象キーワード（1行目に含まれる列を集計・部門別表では無効）",
-        options=list(HQ_PERSONNEL_KEYWORDS),
-        default=list(HQ_PERSONNEL_KEYWORDS),
-        help="【本部】【桜木町】【新子安】【白根】【さいわい】に該当する列をまとめます。不要な店舗は選択を外してください。"
-        " **支給控除一覧表（部門別）** 形式のときは 001・002 固定のためここは使いません。",
     )
     run_payroll = st.button("本部人件費を集計", type="primary", key="run_payroll")
 
@@ -848,14 +831,6 @@ with tab2:
                             " 001・002 列と【訪問看護】【居宅】【全社計】列・行ラベル（支給合計等）を確認してください。"
                         )
                     else:
-                        with st.container(border=True):
-                            st.markdown("##### halka 本部と参照列（ルール）")
-                            st.markdown(_HALKA_HQ_RULE_CAPTION)
-                            st.markdown("")
-                            st.markdown("**本部（個人）**")
-                            st.caption("従業員番号 001・002 に対応する列")
-                            st.markdown("**参照（部門・全社）**")
-                            st.caption("一覧1行目のヘッダ【訪問看護】【居宅】【全社計】— 項目行は本部列と同一です。")
                         last = cmp_df.iloc[-1]
                         hq_total = float(last.get("本部計(001+002)", 0))
                         zen_col = next((c for c in cmp_df.columns if "全社計" in str(c)), None)
@@ -885,14 +860,10 @@ with tab2:
                                 key="dl_payroll_vert",
                             )
                 else:
-                    surnames = tuple(hq_selected)
-                    if not surnames:
-                        st.error("対象キーワードを1つ以上選択してください。")
-                        st.stop()
                     res_df, errs = aggregate_hq_personnel_cost(
                         df,
                         name_row=DEFAULT_NAME_ROW,
-                        surnames=surnames,
+                        surnames=tuple(HQ_PERSONNEL_KEYWORDS),
                     )
                     for e in errs:
                         st.warning(e)
