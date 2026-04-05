@@ -378,7 +378,7 @@ with st.sidebar:
     st.caption(
         "**➕ 行を追加** または表の **+** で行を追加。**行番号**を指定して **削除** もできます。"
         " キーワード・PL・金額レンジは表で編集（上から優先・長いキーワード優先）。"
-        " 支給控除の人件費合計は **タブ③** の項目名と対応させています。"
+        " 支給控除の人件費合計は **タブ②（支給控除）** の項目名と対応させています。"
     )
     up_master = st.file_uploader("マスタをCSVで上書き読込（任意）", type=["csv"], key="up_master")
     if up_master is not None:
@@ -448,8 +448,8 @@ with st.sidebar:
     sample_bytes = (_ROOT / "sample_master.csv").read_bytes()
     st.download_button("サンプルマスタ（CSV）をダウンロード", data=sample_bytes, file_name="sample_master.csv")
 
-tab1, tab2, tab3 = st.tabs(
-    ["① 読み込み", "② 振り分け実行・結果", "③ 支給控除読み込み"]
+tab1, tab2 = st.tabs(
+    ["① 読み込み・振り分け結果", "② 支給控除読み込み"]
 )
 
 with tab1:
@@ -463,12 +463,10 @@ with tab1:
         type=["csv", "pdf", "xlsx", "xlsm"],
         key="tx",
     )
+    st.divider()
+    run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")
 
-with tab2:
-    st.markdown("### 振り分け実行・結果")
-    run = st.button("振り分けを実行", type="primary")
-
-    if run:
+    if run_keihi:
         if tx_file is None:
             st.error("取引ファイル（CSV または PDF）をアップロードしてください（タブ①）。")
             st.stop()
@@ -699,6 +697,9 @@ with tab2:
         else:
             result = pd.concat([result_in, result_ex]).sort_index()
 
+        st.subheader("振り分け結果")
+        st.success("処理が完了しました。続きに集計・明細・CSVがあります。")
+
         c1, c2, c3, c4, c5 = st.columns(5)
         vc = result["分類結果"].value_counts()
         c1.metric("確定", int(vc.get("確定", 0)))
@@ -818,10 +819,11 @@ with tab2:
 
     else:
         st.info(
-            "タブ①で取引データを読み込み、左サイドバーの **② マスタ** を確認してから「振り分けを実行」を押してください。"
+            "取引データをアップロードし、左サイドバーの **② マスタ** を確認してから、"
+            " 上の **「振り分けを実行」** を押してください。"
         )
 
-with tab3:
+with tab2:
     st.markdown("### 支給控除の読み込み・本部人件費")
     st.caption(
         "「支給合計」＋会社負担社保（健康・介護・厚生・子ども・子育て）を **人件費(支給額,健康,介護,厚生,子ども)** に集計します。"
