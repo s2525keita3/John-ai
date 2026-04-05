@@ -8,6 +8,11 @@ import io
 import pandas as pd
 
 
+def is_probably_pdf_bytes(raw: bytes) -> bool:
+    """先頭が PDF マジックナンバーか。"""
+    return len(raw) >= 4 and raw[:4] == b"%PDF"
+
+
 def read_csv_auto(file_bytes: bytes) -> pd.DataFrame:
     """
     複数エンコーディングを試す（日本語CSVは cp932 / UTF-8 / UTF-16 など混在しがち）。

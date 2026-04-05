@@ -16,7 +16,7 @@ from classifier import (
     load_master_dataframe,
     parse_amount_cell,
 )
-from csv_loader import read_csv_auto
+from csv_loader import is_probably_pdf_bytes, read_csv_auto
 from pl_accounts import pl_dropdown_options
 from aozora_filters import filter_aozora_hq_noise
 from enex_fleet_master import (
@@ -299,7 +299,14 @@ with st.sidebar:
         )
         if enex_master_up is not None:
             try:
-                enex_master_df = read_csv_auto(enex_master_up.read())
+                raw_m = enex_master_up.read()
+                if is_probably_pdf_bytes(raw_m):
+                    st.error(
+                        "カードマスタ（任意）の欄に **PDF** が入っています。"
+                        " ここは **CSV のみ** です。請求書PDFは **タブ①の取引データ** にアップロードしてください。"
+                    )
+                else:
+                    enex_master_df = read_csv_auto(raw_m)
             except Exception as e:
                 st.error(f"カードマスタの読み込みに失敗しました: {e}")
         st.download_button(
@@ -536,7 +543,7 @@ with tab2:
                 ):
                     tx_df = read_yokohama_bank_excel(raw)
                 else:
-                    if len(raw) >= 4 and raw[:4] == b"%PDF":
+                    if is_probably_pdf_bytes(raw):
                         st.error(
                             "アップロードされたのは **PDF** です。エネクスフリートの請求書のときは、"
                             "左のフォーマットで **エネクスフリート（請求書PDF・本部カード0001〜0004）** "
