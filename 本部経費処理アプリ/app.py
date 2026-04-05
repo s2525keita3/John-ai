@@ -24,7 +24,6 @@ from enex_fleet_master import (
     merge_enex_extract_with_master,
     staff_name_to_initials_display,
     summarize_enex_by_base,
-    summarize_enex_by_staff,
 )
 from enex_fleet_pdf import (
     filter_amex_hq_noise,
@@ -538,16 +537,9 @@ with tab1:
             st.caption(f"抽出: **{len(work)}** 行（カードあたり最大1件・車番計ベース）")
             if "拠点" in work.columns:
                 sb = summarize_enex_by_base(work)
-                ss = summarize_enex_by_staff(work)
                 if not sb.empty:
                     st.subheader("エネフリ：拠点別（車番計）")
                     st.dataframe(sb, width="stretch", hide_index=True)
-                if not ss.empty and (
-                    "スタッフ名" in work.columns
-                    and work["スタッフ名"].fillna("").astype(str).str.strip().ne("").any()
-                ):
-                    st.subheader("エネフリ：スタッフ別（車番計）")
-                    st.dataframe(ss, width="stretch", hide_index=True)
             tx_df = None
         elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
             if not name.lower().endswith(".pdf"):
@@ -752,17 +744,11 @@ with tab1:
             _YOKOHAMA_DISPLAY_EXTRA_OMIT if format_preset in _yokohama_presets else ()
         )
 
-        st.subheader("全明細（振分結果付き）")
         _enex_ui = (
             format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）"
         )
-        if _enex_ui and "カード番号" in result.columns:
-            st.caption(
-                "エネフリ明細：**カード番号**は請求書から。**拠点・スタッフ（フルネーム）**は"
-                " 同梱マスタまたは任意アップロードのCSVで紐づけ。"
-                " この表では **振分PL・摘要・入金・車両番号は非表示**、スタッフは **イニシャル**。"
-                " 番号がルール外のときは拠点が「（拠点要確認）」になります。"
-            )
+
+        st.subheader("全明細（振分結果付き）")
         display_all = _result_table_for_display(
             result, extra_omit_cols=_table_extra_omit, enex_compact=_enex_ui
         )
@@ -773,19 +759,20 @@ with tab1:
             hide_index=True,
         )
 
-        st.subheader("勘定項目別 合計（出金・入金・簡易）")
-        if "振分PL項目" in result.columns and (
-            "出金額" in result.columns or "入金額" in result.columns
-        ):
-            agg = aggregate_by_pl(result)
-            if agg.empty:
-                st.info("集計できる行がありません。")
+        if not _enex_ui:
+            st.subheader("勘定項目別 合計（出金・入金・簡易）")
+            if "振分PL項目" in result.columns and (
+                "出金額" in result.columns or "入金額" in result.columns
+            ):
+                agg = aggregate_by_pl(result)
+                if agg.empty:
+                    st.info("集計できる行がありません。")
+                else:
+                    st.dataframe(agg, use_container_width=True, hide_index=True)
             else:
-                st.dataframe(agg, use_container_width=True, hide_index=True)
-        else:
-            st.warning(
-                "「振分PL項目」および「出金額」または「入金額」の列が必要です。"
-            )
+                st.warning(
+                    "「振分PL項目」および「出金額」または「入金額」の列が必要です。"
+                )
 
         st.divider()
         st.subheader("要確認・判断不能（レビュー・自由記載）")
