@@ -71,6 +71,9 @@ _RESULT_TABLE_OMIT_COLS = (
     "メモ",
 )
 
+# エネフリ：カードマスタ紐づけ列は振分PLの次に並べて明細で見やすくする
+_ENEX_DISPLAY_COLS_ORDER = ("カード番号", "拠点", "車両番号", "スタッフ名")
+
 # 横浜信金（CSV／Excel／スキャン）の全明細表示では隠す（ダウンロード「全明細」には残す）
 _YOKOHAMA_DISPLAY_EXTRA_OMIT = (
     "計",
@@ -95,12 +98,13 @@ def _result_table_for_display(
         out = out.drop(columns=drop_cols)
     cols = list(out.columns)
     if "振分PL項目" in cols:
+        enex_first = [c for c in _ENEX_DISPLAY_COLS_ORDER if c in cols]
         if "日付" in cols:
-            rest = [c for c in cols if c not in ("日付", "振分PL項目")]
-            out = out[["日付", "振分PL項目"] + rest]
+            rest = [c for c in cols if c not in ("日付", "振分PL項目", *enex_first)]
+            out = out[["日付", "振分PL項目"] + enex_first + rest]
         else:
-            rest = [c for c in cols if c != "振分PL項目"]
-            out = out[["振分PL項目"] + rest]
+            rest = [c for c in cols if c not in ("振分PL項目", *enex_first)]
+            out = out[["振分PL項目"] + enex_first + rest]
     return out
 
 
@@ -111,6 +115,14 @@ def _result_table_column_config(df: pd.DataFrame) -> dict:
         cfg["日付"] = st.column_config.TextColumn("日付", width="small")
     if "振分PL項目" in df.columns:
         cfg["振分PL項目"] = st.column_config.TextColumn("振分PL項目", width="medium")
+    if "カード番号" in df.columns:
+        cfg["カード番号"] = st.column_config.TextColumn("カード番号", width="small")
+    if "拠点" in df.columns:
+        cfg["拠点"] = st.column_config.TextColumn("拠点", width="small")
+    if "車両番号" in df.columns:
+        cfg["車両番号"] = st.column_config.TextColumn("車両番号", width="medium")
+    if "スタッフ名" in df.columns:
+        cfg["スタッフ名"] = st.column_config.TextColumn("スタッフ名", width="medium")
     return cfg
 
 
@@ -129,6 +141,10 @@ def _sanitize_dataframe_for_streamlit_data_editor(df: pd.DataFrame) -> pd.DataFr
             "摘要",
             "メモ",
             "ご利用内容",
+            "カード番号",
+            "拠点",
+            "車両番号",
+            "スタッフ名",
         }
     )
     for c in out.columns:
@@ -700,6 +716,14 @@ with tab2:
         )
 
         st.subheader("全明細（振分結果付き）")
+        if (
+            format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）"
+            and "カード番号" in result.columns
+        ):
+            st.caption(
+                "エネフリ明細：**カード番号**は請求書から。**拠点・車両番号・スタッフ名**は"
+                " カードマスタCSVをアップロードしたときだけ表示されます（未登録は「（マスタ未登録）」）。"
+            )
         display_all = _result_table_for_display(
             result, extra_omit_cols=_table_extra_omit
         )
