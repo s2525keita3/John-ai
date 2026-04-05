@@ -3,7 +3,7 @@ halka_AI — 本部経費処理（**本部経費処理アプリ／JOHN とは独
 
 - 取込: あおぞらCSV、マネフォカード利用明細CSV（公式列／旧activity互換）、手動列名
 - 横浜信用金庫・エネクスフリートは経費計算に使用しない
-- 既定マスタ: 同梱の halka_master.csv（タブ②で編集・CSV上書き可）
+- 既定マスタ: 同梱の halka_master.csv（左サイドバー②で編集・CSV上書き可）
 - 摘要に APｱﾌﾟﾗｽ 等が含まれる行は出金額を50%按分（リース料・複合機按分）
 
 起動: リポジトリルートで `streamlit run halka_ai/app.py` または `streamlit run halka_ai_app.py`
@@ -35,6 +35,12 @@ from payroll_hq import (
 
 _ROOT = Path(__file__).resolve().parent
 _HALKA_MASTER_CSV = _ROOT / "halka_master.csv"
+
+# halka 向け入力・計上用スプレッドシート
+HALKA_SPREADSHEET_URL = (
+    "https://docs.google.com/spreadsheets/d/1sfPRvU5ueLXdne-S3abXs2Iszndr-y5y96eA2w6l4O8/"
+    "edit?gid=880856182#gid=880856182"
+)
 
 # マネフォクラウド「カード利用明細」CSV（公式列 or 旧アメックス activity 互換）
 _PRESET_MF_CARD = "マネフォカード（利用明細CSV）"
@@ -239,6 +245,16 @@ st.caption(
     " **halka_AI** はあおぞら・マネフォカード利用明細・手動列名。既定マスタは **halka_master.csv** です。"
 )
 
+with st.container(border=True):
+    st.markdown("##### halka 用スプレッドシート（入力・計上先）")
+    st.caption("振分結果を反映したり、本部経費をまとめるときは、まずここを開いてください。")
+    st.link_button(
+        "Google スプレッドシートを開く",
+        HALKA_SPREADSHEET_URL,
+        use_container_width=True,
+        type="primary",
+    )
+
 if "halka_master_work" not in st.session_state:
     st.session_state.halka_master_work = _normalize_halka_master_dataframe(
         pd.read_csv(_HALKA_MASTER_CSV, encoding="utf-8-sig")
@@ -257,7 +273,9 @@ with st.sidebar:
         key="format_preset",
     )
     if format_preset == "あおぞらネット銀行（法人口座・標準CSV）":
-        st.info("列名は **日付・摘要・入金金額・出金金額・残高・メモ**（あおぞら標準）で読みます。")
+        st.info(
+            "列名は **日付・摘要・入金金額・出金金額・残高・メモ**（あおぞら標準）で読みます。"
+        )
         date_col = "日付"
         summary_col = "摘要"
         in_col = "入金金額"
@@ -280,47 +298,15 @@ with st.sidebar:
         in_col = st.text_input("入金額の列名", value="入金額")
         out_col = st.text_input("出金額の列名", value="出金額")
 
-    with st.expander("詳細設定（データソース・除外ルール）", expanded=False):
-        st.caption("通常はこのままで問題ありません。変更するときだけ開いてください。")
-        source_col = st.text_input("データソース列（任意）", value="データソース区分")
-        use_source = st.checkbox("マスタのデータソース区分で絞り込む", value=False)
-        add_src_auto = st.checkbox(
-            "プリセットに応じてデータソース区分を自動付与（列が無いとき：あおぞら／マネフォカード）",
-            value=True,
-        )
-        exclude_orico = st.checkbox(
-            "摘要に「オリコ」を含む行を除外（オリコカード明細を振分対象から外す）",
-            value=True,
-        )
-        exclude_aozora_hq_noise = st.checkbox(
-            "あおぞら本部向け: 資金移動・役員振込・支給控除済み・PE納付・社会保険料を除外",
-            value=True,
-            help="カ）ジヨン系振替、三菱UFJ・シブヤケイタ、楽天・石田、PE納付、社会保険料（半角表記含む）。",
-        )
+    # 詳細設定（データソース・除外ルール）は非表示。既定は従来の expander 既定値と同じ。
+    source_col = "データソース区分"
+    use_source = False
+    add_src_auto = True
+    exclude_orico = True
+    exclude_aozora_hq_noise = True
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["① 取引を読み込む", "② マスタ（ドロップダウン）", "③ 結果", "④ 本部人件費（支給控除）"]
-)
-
-with tab1:
-    st.markdown("### 取引データ（CSV）")
-    st.info(
-        "**あおぞら**／**マネフォ・カード利用明細**（**カード利用明細_*.csv**）はCSV。"
-        " **手動**は列名を左で指定。あおぞらの日付は **20260204** 形式の行もあります。"
-        " 横浜信用金庫・エネクスフリートの取込は行いません。"
-    )
-    tx_file = st.file_uploader(
-        "取引データ（CSV）",
-        type=["csv"],
-        key="tx",
-    )
-
-with tab2:
-    st.markdown("### 振り分けマスタ（halka 専用）")
-    st.caption(
-        "既定は **`halka_master.csv`**（横浜信金・エネクス向けデータソース行は含みません）。"
-        " 必要に応じて下の表またはCSV上書きで調整してください。"
-    )
+    st.divider()
+    st.subheader("② マスタ（ドロップダウン）")
     full_pl = st.checkbox(
         "自社PLは「全項目」をドロップダウンに表示",
         value=True,
@@ -328,11 +314,6 @@ with tab2:
     )
     pl_opts = pl_dropdown_options(full_list=full_pl)
 
-    st.caption(
-        "**➕ 行を追加** または表の **+** で行を追加。**行番号**を指定して **削除** もできます。"
-        " キーワード・PL・金額レンジは表で編集（上から優先・長いキーワード優先）。"
-        " 支給控除の人件費合計は **タブ④** の項目名と対応させています。"
-    )
     st.session_state.halka_master_work = _normalize_halka_master_dataframe(
         st.session_state.halka_master_work
     )
@@ -347,7 +328,7 @@ with tab2:
 
     mw = st.session_state.halka_master_work
     n_master = len(mw)
-    ac1, ac2, ac3 = st.columns([1, 1, 2])
+    ac1, ac2 = st.columns(2)
     with ac1:
         if st.button("➕ 行を追加", type="primary", key="master_add_row"):
             base_cols = list(mw.columns) if not mw.empty else [
@@ -369,17 +350,14 @@ with tab2:
     with ac2:
         max_row = max(1, n_master)
         del_no = st.number_input(
-            "削除する行番号（1始まり）",
+            "削除行（1始まり）",
             min_value=1,
             max_value=max_row,
             value=min(1, max_row),
             key="master_del_row_no",
             disabled=n_master == 0,
         )
-    with ac3:
-        st.write("")
-        st.write("")
-        if st.button("🗑 上記の行を削除", key="master_del_row_btn", disabled=n_master == 0):
+        if st.button("🗑 削除", key="master_del_row_btn", disabled=n_master == 0):
             idx = int(del_no) - 1
             st.session_state.halka_master_work = st.session_state.halka_master_work.drop(index=idx).reset_index(drop=True)
             st.rerun()
@@ -411,10 +389,26 @@ with tab2:
         file_name="halka_master.csv",
     )
 
-with tab3:
-    run = st.button("振り分けを実行", type="primary")
+tab1, tab2 = st.tabs(
+    ["① 読み込み・振り分け結果", "② 支給控除読み込み"]
+)
 
-    if run:
+with tab1:
+    st.markdown("### 読み込み（取引データ）")
+    st.info(
+        "**あおぞら**／**マネフォ・カード利用明細**（**カード利用明細_*.csv**）はCSV。"
+        " **手動**は列名を左で指定。あおぞらの日付は **20260204** 形式の行もあります。"
+        " 横浜信用金庫・エネクスフリートの取込は行いません。"
+    )
+    tx_file = st.file_uploader(
+        "取引データ（CSV）",
+        type=["csv"],
+        key="tx",
+    )
+    st.divider()
+    run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")
+
+    if run_keihi:
         if tx_file is None:
             st.error("取引ファイル（CSV）をアップロードしてください（タブ①）。")
             st.stop()
@@ -544,6 +538,9 @@ with tab3:
         else:
             result = pd.concat([result_in, result_ex]).sort_index()
 
+        st.subheader("振り分け結果")
+        st.success("処理が完了しました。続きに集計・明細・CSVがあります。")
+
         c1, c2, c3, c4, c5 = st.columns(5)
         vc = result["分類結果"].value_counts()
         c1.metric("確定", int(vc.get("確定", 0)))
@@ -642,10 +639,13 @@ with tab3:
             dl3.caption("要確認・判断不能の行があるときに、社長向けCSVをダウンロードできます。")
 
     else:
-        st.info("タブ①で取引データをアップロードし、タブ②でマスタを確認してから「振り分けを実行」を押してください。")
+        st.info(
+            "取引データをアップロードし、左サイドバーの **② マスタ** を確認してから、"
+            " 上の **「振り分けを実行」** を押してください。"
+        )
 
-with tab4:
-    st.markdown("### 支給控除一覧表（部門別）→ 本部人件費")
+with tab2:
+    st.markdown("### 支給控除の読み込み・本部人件費")
     st.caption(
         "「支給合計」＋会社負担社保（健康・介護・厚生・子ども・子育て）を **人件費(支給額,健康,介護,厚生,子ども)** に集計します。"
         " **表の1行目** を氏名・列見出し行として参照します（下でキーワードを選択）。"
