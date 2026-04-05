@@ -115,7 +115,13 @@
     "hq_keywords_default": ["本部", "桜木町", "新子安", "白根", "さいわい"],
     "display_omit_social_columns": [
       "健康保険料(会社)", "介護保険料(会社)", "厚生年金保険料(会社)", "子ども・子育て拠出金(会社)"
-    ]
+    ],
+    "halka_dept_format": {
+      "detect": "1列目が「従業員番号」「従業員」の2行ヘッダ（is_halka_dept_payroll_format）",
+      "hq_columns": "従業員番号 001・002 のみ本部（payroll_hq.HALKA_HQ_EMPLOYEE_CODES）",
+      "reference_columns": "1行目ヘッダに【訪問看護】【居宅】【全社計】— 行項目は ROW_LABELS と同一",
+      "outputs": "aggregate_halka_payroll_comparison（横並び比較表）+ aggregate_halka_hq_personnel_cost_only（本部縦型）"
+    }
   },
   "downloads_summary": {
     "全明細CSV": "分類結果の全列（本部経費一覧表示列含む）",

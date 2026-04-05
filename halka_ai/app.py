@@ -29,7 +29,10 @@ from filters import filter_exclude_orico
 from payroll_hq import (
     DEFAULT_NAME_ROW,
     RESULT_LABEL,
+    aggregate_halka_hq_personnel_cost_only,
+    aggregate_halka_payroll_comparison,
     aggregate_hq_personnel_cost,
+    is_halka_dept_payroll_format,
     load_payroll_matrix,
 )
 from result_display_hide import should_hide_from_main_display
@@ -61,8 +64,14 @@ _HALF_AMOUNT_SUMMARY_MARKERS: tuple[str, ...] = (
     "APアプラス",
 )
 
-# 支給控除一覧：氏名行の列見出しに含まれるキーワードで本部対象列を特定
+# 支給控除一覧：氏名行の列見出しに含まれるキーワードで本部対象列を特定（部門別表でないとき）
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
+
+# 部門別一覧（従業員番号行あり）のときの halka 本部 — payroll_hq.HALKA_HQ_EMPLOYEE_CODES と揃える
+_HALKA_HQ_RULE_CAPTION = (
+    "**halka 本部の扱い:** 従業員番号 **001（加藤 彼方）** と **002（中川 大介）** の列のみを本部として集計します。"
+    " **【訪問看護】【居宅】【全社計】** の列は同じ行項目（支給合計・各社保会社負担・人件費合計）で横に並べて表示します。"
+)
 
 def _normalize_halka_master_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """空欄だらけの列が float 推論され data_editor と衝突するのを防ぐ。"""
@@ -804,7 +813,8 @@ with tab2:
     st.markdown("### 支給控除の読み込み・本部人件費")
     st.caption(
         "「支給合計」＋会社負担社保（健康・介護・厚生・子ども・子育て）を **人件費(支給額,健康,介護,厚生,子ども)** に集計します。"
-        " **表の1行目** を氏名・列見出し行として参照します（下でキーワードを選択）。"
+        " **部門別一覧（従業員番号・従業員の2行ヘッダ）** のときは halka ルール（001・002＝本部、訪問看護／居宅／全社計と並列表示）を使います。"
+        " それ以外は **表の1行目** を氏名・列見出し行としてキーワード照合します。"
     )
     payroll_file = st.file_uploader(
         "支給控除一覧表（xlsx または csv）",
@@ -812,10 +822,11 @@ with tab2:
         key="payroll",
     )
     hq_selected = st.multiselect(
-        "本部の対象キーワード（1行目に含まれる列を集計）",
+        "本部の対象キーワード（1行目に含まれる列を集計・部門別表では無効）",
         options=list(HQ_PERSONNEL_KEYWORDS),
         default=list(HQ_PERSONNEL_KEYWORDS),
-        help="【本部】【桜木町】【新子安】【白根】【さいわい】に該当する列をまとめます。不要な店舗は選択を外してください。",
+        help="【本部】【桜木町】【新子安】【白根】【さいわい】に該当する列をまとめます。不要な店舗は選択を外してください。"
+        " **支給控除一覧表（部門別）** 形式のときは 001・002 固定のためここは使いません。",
     )
     run_payroll = st.button("本部人件費を集計", type="primary", key="run_payroll")
 
@@ -826,32 +837,80 @@ with tab2:
             try:
                 raw = payroll_file.getvalue()
                 df = load_payroll_matrix(raw)
-                surnames = tuple(hq_selected)
-                if not surnames:
-                    st.error("対象キーワードを1つ以上選択してください。")
-                    st.stop()
-                res_df, errs = aggregate_hq_personnel_cost(
-                    df,
-                    name_row=DEFAULT_NAME_ROW,
-                    surnames=surnames,
-                )
-                for e in errs:
-                    st.warning(e)
-                if res_df.empty:
-                    st.error("集計結果がありません。表の形式（1行目に氏名・列見出し）・キーワードの設定を確認してください。")
+                if is_halka_dept_payroll_format(df):
+                    cmp_df, errs = aggregate_halka_payroll_comparison(df)
+                    vert_df, errs_v = aggregate_halka_hq_personnel_cost_only(df)
+                    for e in dict.fromkeys(errs + errs_v):
+                        st.warning(e)
+                    if cmp_df.empty:
+                        st.error(
+                            "部門別フォーマットですが比較表を作成できませんでした。"
+                            " 001・002 列と【訪問看護】【居宅】【全社計】列・行ラベル（支給合計等）を確認してください。"
+                        )
+                    else:
+                        with st.container(border=True):
+                            st.markdown("##### halka 本部と参照列（ルール）")
+                            st.markdown(_HALKA_HQ_RULE_CAPTION)
+                            st.markdown("")
+                            st.markdown("**本部（個人）**")
+                            st.caption("従業員番号 001・002 に対応する列")
+                            st.markdown("**参照（部門・全社）**")
+                            st.caption("一覧1行目のヘッダ【訪問看護】【居宅】【全社計】— 項目行は本部列と同一です。")
+                        last = cmp_df.iloc[-1]
+                        hq_total = float(last.get("本部計(001+002)", 0))
+                        zen_col = next((c for c in cmp_df.columns if "全社計" in str(c)), None)
+                        zen_total = float(last[zen_col]) if zen_col else 0.0
+                        m1, m2 = st.columns(2)
+                        m1.metric(RESULT_LABEL + "（本部計 001+002）", f"{hq_total:,.0f} 円")
+                        m2.metric(RESULT_LABEL + "（【全社計】列）", f"{zen_total:,.0f} 円")
+                        st.subheader("比較一覧（本部・訪問看護・居宅・全社計）")
+                        st.dataframe(cmp_df, width="stretch", hide_index=True)
+                        st.download_button(
+                            "比較表をCSVダウンロード（横並び）",
+                            data=cmp_df.to_csv(index=False).encode("utf-8-sig"),
+                            file_name="本部人件費_支給控除_本部と部門比較.csv",
+                            key="dl_payroll_cmp",
+                        )
+                        if not vert_df.empty:
+                            st.subheader("本部のみ（001・002・合計・縦型）")
+                            st.dataframe(
+                                _payroll_table_for_display(vert_df),
+                                width="stretch",
+                                hide_index=True,
+                            )
+                            st.download_button(
+                                "本部のみ集計をCSVダウンロード（縦型）",
+                                data=vert_df.to_csv(index=False).encode("utf-8-sig"),
+                                file_name="本部人件費_支給控除_本部001002のみ.csv",
+                                key="dl_payroll_vert",
+                            )
                 else:
-                    st.metric(RESULT_LABEL + "（本部合計）", f"{res_df[RESULT_LABEL].iloc[-1]:,.0f} 円")
-                    st.dataframe(
-                        _payroll_table_for_display(res_df),
-                        width="stretch",
-                        hide_index=True,
+                    surnames = tuple(hq_selected)
+                    if not surnames:
+                        st.error("対象キーワードを1つ以上選択してください。")
+                        st.stop()
+                    res_df, errs = aggregate_hq_personnel_cost(
+                        df,
+                        name_row=DEFAULT_NAME_ROW,
+                        surnames=surnames,
                     )
-                    csv_p = res_df.to_csv(index=False).encode("utf-8-sig")
-                    st.download_button(
-                        "集計結果をCSVダウンロード",
-                        data=csv_p,
-                        file_name="本部人件費_支給控除集計.csv",
-                        key="dl_payroll",
-                    )
+                    for e in errs:
+                        st.warning(e)
+                    if res_df.empty:
+                        st.error("集計結果がありません。表の形式（1行目に氏名・列見出し）・キーワードの設定を確認してください。")
+                    else:
+                        st.metric(RESULT_LABEL + "（本部合計）", f"{res_df[RESULT_LABEL].iloc[-1]:,.0f} 円")
+                        st.dataframe(
+                            _payroll_table_for_display(res_df),
+                            width="stretch",
+                            hide_index=True,
+                        )
+                        csv_p = res_df.to_csv(index=False).encode("utf-8-sig")
+                        st.download_button(
+                            "集計結果をCSVダウンロード",
+                            data=csv_p,
+                            file_name="本部人件費_支給控除集計.csv",
+                            key="dl_payroll",
+                        )
             except Exception as e:
                 st.error(f"読み込みまたは集計に失敗しました: {e}")

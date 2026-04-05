@@ -28,8 +28,211 @@ RESULT_LABEL = "人件費(支給額,健康,介護,厚生,子ども)"
 # 既定のキーワード（API利用時。Streamlit は app.HQ_PERSONNEL_KEYWORDS を既定全選択で渡す）
 DEFAULT_HQ_SURNAMES = ("本部", "桜木町", "新子安", "白根", "さいわい")
 
-# 従業員名・列見出しが入る行（0始まり）＝表の **1行目** 固定
+# 従業員名・列見出しが入る行（0始まり）— **キーワード照合** のときは従来どおり 0 行目を氏名行とみなす運用もある
 DEFAULT_NAME_ROW = 0
+
+# --- halka 限定: 「支給控除一覧表（部門別）」で 1 行目=従業員番号、2 行目=氏名、本部は 001・002 のみ ---
+HALKA_PAYROLL_CODE_ROW = 0
+HALKA_PAYROLL_NAME_ROW = 1
+HALKA_HQ_EMPLOYEE_CODES: tuple[str, ...] = ("001", "002")
+
+
+def is_halka_dept_payroll_format(df: pd.DataFrame) -> bool:
+    """1 列目が従業員番号／従業員の 2 行ヘッダなら True（部門別一覧の想定フォーマット）。"""
+    if df.shape[0] < 2 or df.shape[1] < 2:
+        return False
+    a = str(df.iat[0, 0]).strip()
+    b = str(df.iat[1, 0]).strip()
+    return ("従業員番号" in a or a == "従業員番号") and ("従業員" in b or b == "従業員")
+
+
+def _norm_employee_code(v) -> str:
+    if pd.isna(v):
+        return ""
+    s = str(v).strip()
+    if s.isdigit():
+        return s.zfill(3)
+    return s
+
+
+def match_halka_hq_columns(
+    df: pd.DataFrame,
+    *,
+    code_row: int = HALKA_PAYROLL_CODE_ROW,
+    name_row: int = HALKA_PAYROLL_NAME_ROW,
+) -> list[tuple[int, str]]:
+    """
+    従業員番号が 001 / 002 の列のみ (列インデックス, 表示ラベル)。
+    表示ラベル例: 「001 加藤 彼方」
+    """
+    want = frozenset(HALKA_HQ_EMPLOYEE_CODES)
+    out: list[tuple[int, str]] = []
+    if code_row >= len(df) or name_row >= len(df):
+        return []
+    for j in range(1, df.shape[1]):
+        code = _norm_employee_code(df.iat[code_row, j])
+        if code not in want:
+            continue
+        nm = df.iat[name_row, j]
+        nm_s = str(nm).strip() if not pd.isna(nm) else ""
+        if nm_s in ("-", "—", ""):
+            label = code
+        else:
+            label = f"{code} {nm_s}"
+        out.append((j, label))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def find_halka_dept_reference_columns(
+    df: pd.DataFrame,
+    header_row: int = HALKA_PAYROLL_CODE_ROW,
+) -> dict[str, tuple[int, str]]:
+    """
+    【訪問看護】【居宅】【全社計】列（ヘッダ行の文字列で判定）。
+    戻り値: 論理キー → (列インデックス, ヘッダ表示文字列)
+    """
+    found: dict[str, tuple[int, str]] = {}
+    for j in range(1, df.shape[1]):
+        cell = df.iat[header_row, j]
+        if pd.isna(cell):
+            continue
+        s = str(cell).strip()
+        if "訪問看護" in s and "訪問看護" not in found:
+            found["訪問看護"] = (j, s)
+        elif "居宅" in s and "訪問看護" not in s and "居宅" not in found:
+            found["居宅"] = (j, s)
+        elif "全社計" in s and "全社計" not in found:
+            found["全社計"] = (j, s)
+    return found
+
+
+def aggregate_halka_payroll_comparison(
+    df: pd.DataFrame,
+    *,
+    code_row: int = HALKA_PAYROLL_CODE_ROW,
+    name_row: int = HALKA_PAYROLL_NAME_ROW,
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    本部（001・002）と【訪問看護】【居宅】【全社計】を横並びで比較する表。
+    行は ROW_LABELS に加え最終行に RESULT_LABEL（各列で縦合計）。
+    """
+    errors: list[str] = []
+    row_idx: dict[str, int] = {}
+    for lab in ROW_LABELS:
+        ri = _find_row_index(df, lab)
+        if ri is None:
+            errors.append(f"行ラベル「{lab}」が見つかりません（1列目の表記を確認してください）")
+        else:
+            row_idx[lab] = ri
+
+    hq_cols = match_halka_hq_columns(df, code_row=code_row, name_row=name_row)
+    if not hq_cols:
+        errors.append(
+            f"本部列（従業員番号 {', '.join(HALKA_HQ_EMPLOYEE_CODES)}）が見つかりません。"
+        )
+
+    ref = find_halka_dept_reference_columns(df, header_row=code_row)
+    for key, label in (("訪問看護", "【訪問看護】"), ("居宅", "【居宅】"), ("全社計", "【全社計】")):
+        if key not in ref:
+            errors.append(f"参照列「{label}」に一致するヘッダが見つかりません（1行目を確認してください）。")
+
+    if not hq_cols or any(k not in ref for k in ("訪問看護", "居宅", "全社計")):
+        return pd.DataFrame(), errors
+
+    col_order: list[str] = []
+    series: dict[str, list[float]] = {}
+
+    for j, lab_hq in hq_cols:
+        col_order.append(f"本部 {lab_hq}")
+        vals: list[float] = []
+        for row_lab in ROW_LABELS:
+            vals.append(
+                parse_matrix_cell(df.iat[row_idx[row_lab], j]) if row_lab in row_idx else 0.0
+            )
+        vals.append(sum(vals))
+        series[col_order[-1]] = vals
+
+    sum_vals: list[float] = []
+    for row_lab in ROW_LABELS:
+        s = 0.0
+        for j, _ in hq_cols:
+            if row_lab in row_idx:
+                s += parse_matrix_cell(df.iat[row_idx[row_lab], j])
+        sum_vals.append(s)
+    sum_vals.append(sum(sum_vals))
+    col_order.append("本部計(001+002)")
+    series["本部計(001+002)"] = sum_vals
+
+    for key in ("訪問看護", "居宅", "全社計"):
+        j, hdr = ref[key]
+        title = hdr if hdr.startswith("【") else f"【{key}】"
+        col_order.append(title)
+        vals = []
+        for row_lab in ROW_LABELS:
+            vals.append(
+                parse_matrix_cell(df.iat[row_idx[row_lab], j]) if row_lab in row_idx else 0.0
+            )
+        vals.append(sum(vals))
+        series[col_order[-1]] = vals
+
+    row_labels_display = list(ROW_LABELS) + [RESULT_LABEL]
+    rows_out: list[dict[str, float | str]] = []
+    for i, rname in enumerate(row_labels_display):
+        rec: dict[str, float | str] = {"項目": rname}
+        for c in col_order:
+            rec[c] = series[c][i]
+        rows_out.append(rec)
+
+    return pd.DataFrame(rows_out), errors
+
+
+def aggregate_halka_hq_personnel_cost_only(
+    df: pd.DataFrame,
+    *,
+    code_row: int = HALKA_PAYROLL_CODE_ROW,
+    name_row: int = HALKA_PAYROLL_NAME_ROW,
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    001・002 のみを対象に、aggregate_hq_personnel_cost と同じ縦型（氏名・各項目・人件費合計・本部合計行）。
+    """
+    errors: list[str] = []
+    row_idx: dict[str, int] = {}
+    for lab in ROW_LABELS:
+        ri = _find_row_index(df, lab)
+        if ri is None:
+            errors.append(f"行ラベル「{lab}」が見つかりません（1列目の表記を確認してください）")
+        else:
+            row_idx[lab] = ri
+
+    cols = match_halka_hq_columns(df, code_row=code_row, name_row=name_row)
+    if not cols:
+        errors.append("本部（001・002）の列が見つかりません。")
+        return pd.DataFrame(), errors
+
+    rows_out: list[dict] = []
+    for j, display_name in cols:
+        rec: dict[str, float | str] = {"氏名": display_name}
+        total = 0.0
+        for lab in ROW_LABELS:
+            if lab not in row_idx:
+                rec[lab] = 0.0
+                continue
+            v = parse_matrix_cell(df.iat[row_idx[lab], j])
+            rec[lab] = v
+            total += v
+        rec[RESULT_LABEL] = total
+        rows_out.append(rec)
+
+    out_df = pd.DataFrame(rows_out)
+    if not out_df.empty:
+        sum_row: dict[str, float | str] = {"氏名": "本部合計(001+002)"}
+        for lab in ROW_LABELS:
+            sum_row[lab] = float(out_df[lab].sum()) if lab in out_df.columns else 0.0
+        sum_row[RESULT_LABEL] = float(out_df[RESULT_LABEL].sum())
+        out_df = pd.concat([out_df, pd.DataFrame([sum_row])], ignore_index=True)
+
+    return out_df, errors
 
 
 def parse_matrix_cell(v) -> float:
