@@ -20,6 +20,7 @@ from csv_loader import is_probably_pdf_bytes, read_csv_auto
 from pl_accounts import pl_dropdown_options
 from aozora_filters import filter_aozora_hq_noise
 from enex_fleet_master import (
+    apply_enex_default_card_mapping,
     merge_enex_extract_with_master,
     summarize_enex_by_base,
     summarize_enex_by_staff,
@@ -305,7 +306,8 @@ with st.sidebar:
             " **PyMuPDF** が必要です（`pip install pymupdf`）。"
         )
         st.caption(
-            "カードマスタCSV（任意）で **拠点・スタッフ** を紐づけ、**拠点別・スタッフ別** に集計できます。"
+            "**拠点**はPDFのカード番号から自動で付きます。"
+            " **カードマスタCSV（任意）**で **車両番号・スタッフ名**（必要なら拠点の修正）を上書きできます。"
             " 列: **カード番号, 拠点, 車両番号, スタッフ名**（番号は1や01でも可）。"
         )
         enex_master_up = st.file_uploader(
@@ -480,6 +482,7 @@ with tab2:
                 st.stop()
             try:
                 work = parse_enex_fleet_pdf_bytes(raw, filename=name)
+                work = apply_enex_default_card_mapping(work)
                 if enex_master_df is not None and not enex_master_df.empty:
                     work = merge_enex_extract_with_master(work, enex_master_df)
             except Exception as e:
@@ -492,26 +495,23 @@ with tab2:
                 )
                 st.stop()
             total_enex = float(pd.to_numeric(work["出金額"], errors="coerce").fillna(0).sum())
-            _metric_help = (
-                "PDFの「（車番　計）」のみ。カードマスタありのときはマスタ列挙カードを対象にします。"
-            )
+            _metric_help = "PDFの「（車番　計）」行の金額のみ。拠点はカード番号から自動付与。"
             st.metric(
                 "エネフリ請求書・カード別（車番計）の合計",
                 f"{total_enex:,.0f} 円",
                 help=_metric_help,
             )
             st.caption(f"抽出: **{len(work)}** 行（カードあたり最大1件・車番計ベース）")
-            if (
-                enex_master_df is not None
-                and not enex_master_df.empty
-                and "拠点" in work.columns
-            ):
+            if "拠点" in work.columns:
                 sb = summarize_enex_by_base(work)
                 ss = summarize_enex_by_staff(work)
                 if not sb.empty:
                     st.subheader("エネフリ：拠点別（車番計）")
                     st.dataframe(sb, width="stretch", hide_index=True)
-                if not ss.empty:
+                if not ss.empty and (
+                    "スタッフ名" in work.columns
+                    and work["スタッフ名"].fillna("").astype(str).str.strip().ne("").any()
+                ):
                     st.subheader("エネフリ：スタッフ別（車番計）")
                     st.dataframe(ss, width="stretch", hide_index=True)
             tx_df = None
@@ -721,8 +721,9 @@ with tab2:
             and "カード番号" in result.columns
         ):
             st.caption(
-                "エネフリ明細：**カード番号**は請求書から。**拠点・車両番号・スタッフ名**は"
-                " カードマスタCSVをアップロードしたときだけ表示されます（未登録は「（マスタ未登録）」）。"
+                "エネフリ明細：**カード番号**は請求書から。**拠点**は番号ルールで自動付与。"
+                " **車両番号・スタッフ名**はカードマスタCSVで上書きできます（未設定は空欄）。"
+                " 番号がルール外のときは拠点が「（拠点要確認）」になります。"
             )
         display_all = _result_table_for_display(
             result, extra_omit_cols=_table_extra_omit
