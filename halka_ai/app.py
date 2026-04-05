@@ -1,7 +1,7 @@
 """
 halka_AI — 本部経費処理（**本部経費処理アプリ／JOHN とは独立したパッケージ**）
 
-- 取込: あおぞらCSV、マネフォカード利用明細CSV（公式列／旧activity互換）、手動列名
+- 取込: あおぞらCSV、マネフォカード利用明細CSV（公式列／旧activity互換）
 - 横浜信用金庫・エネクスフリートは経費計算に使用しない
 - 既定マスタ: 同梱の halka_master.csv（左サイドバー②で編集・CSV上書き可）
 - 摘要に APｱﾌﾟﾗｽ 等が含まれる行は出金額を50%按分（リース料・複合機按分）
@@ -32,6 +32,12 @@ from payroll_hq import (
     aggregate_hq_personnel_cost,
     load_payroll_matrix,
 )
+from result_display_hide import should_hide_from_main_display
+from amazon_aozora_reconcile import (
+    build_amazon_payment_table,
+    filter_bank_visa_debit_rows,
+    match_amazon_to_bank,
+)
 
 _ROOT = Path(__file__).resolve().parent
 _HALKA_MASTER_CSV = _ROOT / "halka_master.csv"
@@ -41,6 +47,13 @@ HALKA_SPREADSHEET_URL = (
     "https://docs.google.com/spreadsheets/d/1sfPRvU5ueLXdne-S3abXs2Iszndr-y5y96eA2w6l4O8/"
     "edit?gid=880856182#gid=880856182"
 )
+
+# 取引 CSV の取得先（左サイドバー・フォーマット連動）
+GMO_AOZORA_BANK_URL = "https://bank.gmo-aozora.com/"
+MONEYFORWARD_BIZ_PAY_HOME_URL = "https://biz-pay.moneyforward.com/home"
+
+# Amazon（注文確認・注文履歴の取得）
+AMAZON_JP_HOME_URL = "https://www.amazon.co.jp/?ref_=abn_logo"
 
 # マネフォクラウド「カード利用明細」CSV（公式列 or 旧アメックス activity 互換）
 _PRESET_MF_CARD = "マネフォカード（利用明細CSV）"
@@ -53,6 +66,34 @@ _HALF_AMOUNT_SUMMARY_MARKERS: tuple[str, ...] = (
 
 # 支給控除一覧：氏名行の列見出しに含まれるキーワードで本部対象列を特定
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
+
+# Amazon×あおぞら照合: メインの expander 内ファイル欄だけ大きなドロップゾーンにする（サイドバーは対象外）
+_AMAZON_RECONCILE_DROPZONE_CSS = """
+<style>
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stFileUploaderDropzone"] {
+    min-height: 168px !important;
+    padding: 1.1rem 1rem !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: 2px dashed rgba(71, 85, 119, 0.4) !important;
+    border-radius: 12px !important;
+    background: linear-gradient(165deg, #f8fafc 0%, #eef2f7 100%) !important;
+    box-sizing: border-box !important;
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stFileUploaderDropzone"]:hover {
+    border-color: rgba(37, 99, 235, 0.55) !important;
+    background: #f5f9ff !important;
+    box-shadow: 0 1px 8px rgba(37, 99, 235, 0.08);
+}
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stFileUploader"] {
+    width: 100% !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stFileUploader"] section {
+    gap: 0.35rem !important;
+}
+</style>
+"""
 
 
 def _normalize_halka_master_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -119,6 +160,32 @@ _RESULT_TABLE_OMIT_COLS = (
     "海外通貨利用金額",
     "換算レート",
     "メモ",
+    "本部経費一覧表示",
+)
+
+# 交際費一覧の表・交際費専用CSVでは非表示（マネフォ公式カード明細の冗長列）
+_KOUSAI_VIEW_EXTRA_OMIT_COLS = (
+    "カード利用明細ID",
+    "取引日時",
+    "確定日時",
+    "支払先（カナ）",
+    "支払先（漢字）",
+    "登録番号",
+    "取引状況",
+    "金額",
+    "速報金額",
+    "現地通貨金額",
+    "現地通貨コード",
+    "為替レート",
+    "海外サービス手数料",
+    "ポイント還元率",
+    "ポイント還元額",
+    "カードID",
+    "カード番号4桁",
+    "証憑添付",
+    "作成日時",
+    "更新日時",
+    "分類結果",
 )
 
 
@@ -169,6 +236,7 @@ def _sanitize_dataframe_for_streamlit_data_editor(df: pd.DataFrame) -> pd.DataFr
             "摘要",
             "メモ",
             "ご利用内容",
+            "相手・確認",
         }
     )
     for c in out.columns:
@@ -242,18 +310,26 @@ st.title("halka_AI — 本部経費処理（月次振り分け）")
 st.caption(
     "取引CSVをアップロードし、マスタ（摘要キーワード→自社PL）で自動振り分けします。"
     " 確定／要確認／判断不能の3区分（要件定義書 v2 ステップ4）。"
-    " **halka_AI** はあおぞら・マネフォカード利用明細・手動列名。既定マスタは **halka_master.csv** です。"
+    " **halka_AI** はあおぞら・マネフォカード利用明細（公式列）。既定マスタは **halka_master.csv** です。"
 )
 
 with st.container(border=True):
     st.markdown("##### halka 用スプレッドシート（入力・計上先）")
     st.caption("振分結果を反映したり、本部経費をまとめるときは、まずここを開いてください。")
-    st.link_button(
-        "Google スプレッドシートを開く",
-        HALKA_SPREADSHEET_URL,
-        use_container_width=True,
-        type="primary",
-    )
+    _lk1, _lk2 = st.columns(2)
+    with _lk1:
+        st.link_button(
+            "Google スプレッドシートを開く",
+            HALKA_SPREADSHEET_URL,
+            use_container_width=True,
+            type="primary",
+        )
+    with _lk2:
+        st.link_button(
+            "Amazon.co.jp を開く（注文履歴の取得など）",
+            AMAZON_JP_HOME_URL,
+            use_container_width=True,
+        )
 
 # ディスク上の halka_master.csv が更新されたら再読込（session_state が古いマスタのまま残るのを防ぐ）
 _halka_master_mtime = _HALKA_MASTER_CSV.stat().st_mtime if _HALKA_MASTER_CSV.is_file() else 0.0
@@ -273,36 +349,40 @@ with st.sidebar:
         [
             "あおぞらネット銀行（法人口座・標準CSV）",
             _PRESET_MF_CARD,
-            "手動で列名を指定",
         ],
         help="銀行・カードのダウンロードCSVは Shift-JIS（cp932）のことが多いです（自動で utf-8/cp932 を試行）。",
         key="format_preset",
     )
     if format_preset == "あおぞらネット銀行（法人口座・標準CSV）":
-        st.info(
-            "列名は **日付・摘要・入金金額・出金金額・残高・メモ**（あおぞら標準）で読みます。"
-        )
         date_col = "日付"
         summary_col = "摘要"
         in_col = "入金金額"
         out_col = "出金金額"
-    elif format_preset == _PRESET_MF_CARD:
-        st.info(
-            "**公式（推奨）:** マネフォ管理サイトの **カード利用明細** CSV。"
-            " **取引日時・支払先・支払先（漢字）・金額** など（ファイル名例: カード利用明細_*.csv）。"
-            " 金額はマイナスなので **絶対値** を出金として扱います。"
-            " **カード名義人** 列があれば結果に残ります（利用者の目安）。"
-            " **互換:** 旧 **ご利用日・ご利用内容・金額** のCSVも同じプリセットで読み込めます。"
-        )
+    else:
         date_col = ""
         summary_col = ""
         in_col = ""
         out_col = ""
-    else:
-        date_col = st.text_input("日付の列名", value="日付")
-        summary_col = st.text_input("摘要の列名", value="摘要")
-        in_col = st.text_input("入金額の列名", value="入金額")
-        out_col = st.text_input("出金額の列名", value="出金額")
+
+    st.divider()
+    if format_preset == "あおぞらネット銀行（法人口座・標準CSV）":
+        st.caption("取引 CSV のダウンロード（法人口座）")
+        st.link_button(
+            "GMOあおぞらネット銀行を開く",
+            GMO_AOZORA_BANK_URL,
+            use_container_width=True,
+            type="primary",
+            help="ログイン後、入出金明細などから CSV を取得してください。",
+        )
+    elif format_preset == _PRESET_MF_CARD:
+        st.caption("カード利用明細 CSV の取得（マネフォクラウド）")
+        st.link_button(
+            "マネフォ ビズPay 管理サイトを開く",
+            MONEYFORWARD_BIZ_PAY_HOME_URL,
+            use_container_width=True,
+            type="primary",
+            help="ログイン後、カード利用明細を CSV でダウンロードしてください。",
+        )
 
     # 詳細設定（データソース・除外ルール）は非表示。既定は従来の expander 既定値と同じ。
     source_col = "データソース区分"
@@ -312,88 +392,88 @@ with st.sidebar:
     exclude_aozora_hq_noise = True
 
     st.divider()
-    st.subheader("② マスタ（ドロップダウン）")
-    full_pl = st.checkbox(
-        "自社PLは「全項目」をドロップダウンに表示",
-        value=True,
-        key="master_full_pl",
-    )
-    pl_opts = pl_dropdown_options(full_list=full_pl)
-
-    st.session_state.halka_master_work = _normalize_halka_master_dataframe(
-        st.session_state.halka_master_work
-    )
-    up_master = st.file_uploader("マスタをCSVで上書き読込（任意）", type=["csv"], key="up_master")
-    if up_master is not None:
-        try:
-            raw = up_master.read()
-            st.session_state.halka_master_work = _normalize_halka_master_dataframe(read_csv_auto(raw))
-            st.success("マスタを読み込みました")
-        except Exception as e:
-            st.error(f"読み込み失敗: {e}")
-
-    mw = st.session_state.halka_master_work
-    n_master = len(mw)
-    ac1, ac2 = st.columns(2)
-    with ac1:
-        if st.button("➕ 行を追加", type="primary", key="master_add_row"):
-            base_cols = list(mw.columns) if not mw.empty else [
-                "摘要キーワード",
-                "自社PL勘定項目",
-                "金額下限",
-                "金額上限",
-                "データソース区分",
-            ]
-            if mw.empty:
-                st.session_state.halka_master_work = pd.DataFrame(columns=base_cols)
-                mw = st.session_state.halka_master_work
-            new_row = {c: ("（未選択）" if c == "自社PL勘定項目" else ("" if c in ("摘要キーワード", "データソース区分") else None)) for c in mw.columns}
-            st.session_state.halka_master_work = pd.concat(
-                [st.session_state.halka_master_work, pd.DataFrame([new_row])],
-                ignore_index=True,
-            )
-            st.rerun()
-    with ac2:
-        max_row = max(1, n_master)
-        del_no = st.number_input(
-            "削除行（1始まり）",
-            min_value=1,
-            max_value=max_row,
-            value=min(1, max_row),
-            key="master_del_row_no",
-            disabled=n_master == 0,
+    with st.expander("② マスタ（ドロップダウン）", expanded=False):
+        full_pl = st.checkbox(
+            "自社PLは「全項目」をドロップダウンに表示",
+            value=True,
+            key="master_full_pl",
         )
-        if st.button("🗑 削除", key="master_del_row_btn", disabled=n_master == 0):
-            idx = int(del_no) - 1
-            st.session_state.halka_master_work = st.session_state.halka_master_work.drop(index=idx).reset_index(drop=True)
-            st.rerun()
+        pl_opts = pl_dropdown_options(full_list=full_pl)
 
-    edited = st.data_editor(
-        st.session_state.halka_master_work,
-        column_config={
-            "摘要キーワード": st.column_config.TextColumn("摘要キーワード（部分一致）", width="medium"),
-            "自社PL勘定項目": st.column_config.SelectboxColumn(
-                "自社PL勘定項目",
-                options=pl_opts,
-                required=False,
-            ),
-            "金額下限": st.column_config.NumberColumn("金額下限（空＝無制限）", format="%d"),
-            "金額上限": st.column_config.NumberColumn("金額上限（空＝無制限）", format="%d"),
-            "データソース区分": st.column_config.TextColumn("データソース（空＝全ソース）", width="small"),
-        },
-        num_rows="dynamic",
-        width="stretch",
-        hide_index=False,
-        key="master_editor",
-    )
-    st.session_state.halka_master_work = edited
+        st.session_state.halka_master_work = _normalize_halka_master_dataframe(
+            st.session_state.halka_master_work
+        )
+        up_master = st.file_uploader("マスタをCSVで上書き読込（任意）", type=["csv"], key="up_master")
+        if up_master is not None:
+            try:
+                raw = up_master.read()
+                st.session_state.halka_master_work = _normalize_halka_master_dataframe(read_csv_auto(raw))
+                st.success("マスタを読み込みました")
+            except Exception as e:
+                st.error(f"読み込み失敗: {e}")
 
-    master_dl = _HALKA_MASTER_CSV.read_bytes() if _HALKA_MASTER_CSV.is_file() else edited.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "halka 既定マスタ（CSV）をダウンロード",
-        data=master_dl,
-        file_name="halka_master.csv",
-    )
+        mw = st.session_state.halka_master_work
+        n_master = len(mw)
+        ac1, ac2 = st.columns(2)
+        with ac1:
+            if st.button("➕ 行を追加", type="primary", key="master_add_row"):
+                base_cols = list(mw.columns) if not mw.empty else [
+                    "摘要キーワード",
+                    "自社PL勘定項目",
+                    "金額下限",
+                    "金額上限",
+                    "データソース区分",
+                ]
+                if mw.empty:
+                    st.session_state.halka_master_work = pd.DataFrame(columns=base_cols)
+                    mw = st.session_state.halka_master_work
+                new_row = {c: ("（未選択）" if c == "自社PL勘定項目" else ("" if c in ("摘要キーワード", "データソース区分") else None)) for c in mw.columns}
+                st.session_state.halka_master_work = pd.concat(
+                    [st.session_state.halka_master_work, pd.DataFrame([new_row])],
+                    ignore_index=True,
+                )
+                st.rerun()
+        with ac2:
+            max_row = max(1, n_master)
+            del_no = st.number_input(
+                "削除行（1始まり）",
+                min_value=1,
+                max_value=max_row,
+                value=min(1, max_row),
+                key="master_del_row_no",
+                disabled=n_master == 0,
+            )
+            if st.button("🗑 削除", key="master_del_row_btn", disabled=n_master == 0):
+                idx = int(del_no) - 1
+                st.session_state.halka_master_work = st.session_state.halka_master_work.drop(index=idx).reset_index(drop=True)
+                st.rerun()
+
+        edited = st.data_editor(
+            st.session_state.halka_master_work,
+            column_config={
+                "摘要キーワード": st.column_config.TextColumn("摘要キーワード（部分一致）", width="medium"),
+                "自社PL勘定項目": st.column_config.SelectboxColumn(
+                    "自社PL勘定項目",
+                    options=pl_opts,
+                    required=False,
+                ),
+                "金額下限": st.column_config.NumberColumn("金額下限（空＝無制限）", format="%d"),
+                "金額上限": st.column_config.NumberColumn("金額上限（空＝無制限）", format="%d"),
+                "データソース区分": st.column_config.TextColumn("データソース（空＝全ソース）", width="small"),
+            },
+            num_rows="dynamic",
+            width="stretch",
+            hide_index=False,
+            key="master_editor",
+        )
+        st.session_state.halka_master_work = edited
+
+        master_dl = _HALKA_MASTER_CSV.read_bytes() if _HALKA_MASTER_CSV.is_file() else edited.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "halka 既定マスタ（CSV）をダウンロード",
+            data=master_dl,
+            file_name="halka_master.csv",
+        )
 
 tab1, tab2 = st.tabs(
     ["① 読み込み・振り分け結果", "② 支給控除読み込み"]
@@ -401,16 +481,100 @@ tab1, tab2 = st.tabs(
 
 with tab1:
     st.markdown("### 読み込み（取引データ）")
-    st.info(
-        "**あおぞら**／**マネフォ・カード利用明細**（**カード利用明細_*.csv**）はCSV。"
-        " **手動**は列名を左で指定。あおぞらの日付は **20260204** 形式の行もあります。"
-        " 横浜信用金庫・エネクスフリートの取込は行いません。"
-    )
     tx_file = st.file_uploader(
         "取引データ（CSV）",
         type=["csv"],
         key="tx",
     )
+
+    with st.expander("Amazon × あおぞら 照合（任意）", expanded=True):
+        st.caption(
+            "**法人向け注文履歴**と**口座明細**を、**金額が一致**し、"
+            "**Amazon の支払い確定日**と**口座の日付**が **±2 日**以内なら同一とみなします。"
+            " 照合の金額は CSV の **支払い金額**（分割カード決済ごと）です。"
+            " **注文の合計（税込）**は注文全体の合計のため、口座の各引落としとは一致しません。"
+            " **支払認証ID/請求書番号** があると、同一注文内の複数回引落としを区別できます。"
+            " 口座は **出金がある行**のみ対象です。"
+        )
+        st.link_button(
+            "Amazon.co.jp を開く（注文履歴のダウンロード）",
+            AMAZON_JP_HOME_URL,
+            use_container_width=True,
+        )
+        st.markdown(_AMAZON_RECONCILE_DROPZONE_CSS, unsafe_allow_html=True)
+        with st.container(border=True):
+            _zu_l, _zu_r = st.columns(2, gap="large")
+            with _zu_l:
+                st.markdown("##### Amazon 注文履歴")
+                st.caption("CSV をここにドラッグ＆ドロップ、または枠内をクリック")
+                up_amazon_orders = st.file_uploader(
+                    "Amazon 注文履歴 CSV",
+                    type=["csv"],
+                    key="up_amazon_orders",
+                    label_visibility="collapsed",
+                    help="法人アカウントの注文履歴レポート（支払い確定日・支払い金額・商品名 など）",
+                )
+            with _zu_r:
+                st.markdown("##### あおぞら口座明細")
+                st.caption("CSV をここにドラッグ＆ドロップ、または枠内をクリック")
+                up_aozora_match = st.file_uploader(
+                    "あおぞら口座明細 CSV",
+                    type=["csv"],
+                    key="up_aozora_match",
+                    label_visibility="collapsed",
+                    help="あおぞら標準（日付・出金金額／出金額 など）で可。出金のある行が照合対象です。",
+                )
+        run_amazon_match = st.button("照合を実行", type="primary", key="run_amazon_match")
+
+        if run_amazon_match:
+            if up_amazon_orders is None or up_aozora_match is None:
+                st.error("Amazon 注文履歴とあおぞら明細の両方をアップロードしてください。")
+            else:
+                try:
+                    raw_a = up_amazon_orders.getvalue()
+                    raw_b = up_aozora_match.getvalue()
+                    df_a = read_csv_auto(raw_a)
+                    df_b = read_csv_auto(raw_b)
+                    amz_tbl = build_amazon_payment_table(df_a)
+                    bank_debits = filter_bank_visa_debit_rows(df_b)
+                    matched, bank_only, amz_only = match_amazon_to_bank(
+                        amz_tbl,
+                        bank_debits,
+                        date_tolerance_days=2,
+                    )
+                    st.subheader("照合結果（一致）")
+                    if matched.empty:
+                        st.info("条件に一致する組み合わせがありませんでした。")
+                    else:
+                        st.dataframe(matched, width="stretch", hide_index=True)
+                        st.download_button(
+                            "照合結果をCSVダウンロード",
+                            data=matched.to_csv(index=False).encode("utf-8-sig"),
+                            file_name=f"Amazon口座照合_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                            key="dl_amazon_match",
+                        )
+                    cbo, cam = st.columns(2)
+                    with cbo:
+                        st.markdown("**口座側のみ（未照合）**")
+                        if bank_only.empty:
+                            st.caption("なし")
+                        else:
+                            _bo = bank_only.drop(
+                                columns=["_bank_date", "_out"], errors="ignore"
+                            )
+                            st.dataframe(_bo, width="stretch", hide_index=True)
+                    with cam:
+                        st.markdown("**Amazon 側のみ（未照合）**")
+                        if amz_only.empty:
+                            st.caption("なし")
+                        else:
+                            show_amz = amz_only.drop(
+                                columns=["_ad", "_am"], errors="ignore"
+                            )
+                            st.dataframe(show_amz, width="stretch", hide_index=True)
+                except Exception as e:
+                    st.error(f"照合に失敗しました: {e}")
+
     st.divider()
     run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")
 
@@ -544,19 +708,36 @@ with tab1:
         else:
             result = pd.concat([result_in, result_ex]).sort_index()
 
+        _sum_col = "摘要"
+        if _sum_col in result.columns:
+            _hide_mask = result[_sum_col].fillna("").astype(str).map(should_hide_from_main_display)
+        else:
+            _hide_mask = pd.Series(False, index=result.index)
+        result = result.copy()
+        result["本部経費一覧表示"] = ~_hide_mask
+        result_vis = result.loc[~_hide_mask].copy()
+        result_hidden = result.loc[_hide_mask].copy()
+
         st.subheader("振り分け結果")
         st.success("処理が完了しました。続きに集計・明細・CSVがあります。")
+        stamp = datetime.now().strftime("%Y%m%d_%H%M")
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        vc = result["分類結果"].value_counts()
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        vc = result_vis["分類結果"].value_counts()
         c1.metric("確定", int(vc.get("確定", 0)))
         c2.metric("要確認", int(vc.get("要確認", 0)))
         c3.metric("判断不能", int(vc.get("判断不能", 0)))
         c4.metric("除外", int(vc.get("除外", 0)))
-        c5.metric("件数合計", len(result))
+        c5.metric("一覧表示件数", len(result_vis))
+        c6.metric("一覧非表示", len(result_hidden))
 
-        st.subheader("全明細（振分結果付き）")
-        display_all = _result_table_for_display(result)
+        st.caption(
+            "「一覧非表示」は支給控除・居宅資金移動・マネフォ別取込・給与振込など、"
+            "本部経費の一覧チェック対象外にできる明細です（**CSV には全件・列「本部経費一覧表示」付き**）。"
+        )
+
+        st.subheader("全明細（振分結果付き・一覧表示対象）")
+        display_all = _result_table_for_display(result_vis)
         st.dataframe(
             display_all,
             column_config=_result_table_column_config(display_all),
@@ -564,11 +745,76 @@ with tab1:
             hide_index=True,
         )
 
+        st.subheader("除外一覧（確認用）")
+        st.caption(
+            f"メインの「全明細」から外した **{len(result_hidden)} 件**です。"
+            " 支給控除・居宅資金移動・マネフォ別取込・給与振込など。"
+            " **全明細 CSV** には全件・列「本部経費一覧表示」付きで含まれます。"
+        )
+        if result_hidden.empty:
+            st.info("除外対象の明細はありません。")
+        else:
+            dh = _result_table_for_display(result_hidden)
+            st.dataframe(
+                dh,
+                column_config=_result_table_column_config(dh),
+                width="stretch",
+                hide_index=True,
+            )
+
+        st.subheader("交際費一覧（誰との取引か・確認用）")
+        st.caption(
+            "振分結果で **接待交際費** となった明細だけを一覧にしています。"
+            " 表に **表示している列だけ** が、下の「交際費一覧・表示列のみ」CSV に出力されます。"
+        )
+        _kousai_pl = "接待交際費"
+        _mask_k = (
+            result_vis["振分PL項目"].fillna("").astype(str).str.strip() == _kousai_pl
+        )
+        kousai_df = result_vis.loc[_mask_k].copy()
+        if kousai_df.empty:
+            st.info("接待交際費に該当する明細はありません。")
+            edited_kousai = None
+        else:
+            if "相手・確認" not in kousai_df.columns:
+                kousai_df["相手・確認"] = ""
+            kousai_show = _result_table_for_display(
+                kousai_df,
+                extra_omit_cols=_KOUSAI_VIEW_EXTRA_OMIT_COLS,
+            )
+            kousai_show = _sanitize_dataframe_for_streamlit_data_editor(kousai_show)
+            _kcfg = _result_table_column_config(kousai_show)
+            if "相手・確認" in kousai_show.columns:
+                _kcfg["相手・確認"] = st.column_config.TextColumn(
+                    "相手・確認",
+                    width="large",
+                    help="取引相手・用途など、必要に応じて追記",
+                )
+            edited_kousai = st.data_editor(
+                kousai_show,
+                column_config=_kcfg,
+                width="stretch",
+                hide_index=True,
+                num_rows="fixed",
+                key="kousai_editor",
+            )
+            st.caption(
+                "**相手・確認** に相手先などを記入し、**交際費一覧・表示列のみ（CSV）** をダウンロードして報告してください。"
+            )
+            _kdl = edited_kousai.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "交際費一覧・表示列のみ（CSV）をダウンロード",
+                data=_kdl,
+                file_name=f"本部経費_交際費一覧_表示列のみ_{stamp}.csv",
+                key="dl_kousai_visible_cols",
+                help="この表に表示している列だけを出力します（マネフォカードの明細ID・取引日時などは含みません）。",
+            )
+
         st.subheader("勘定項目別 合計（出金・入金・簡易）")
-        if "振分PL項目" in result.columns and (
-            "出金額" in result.columns or "入金額" in result.columns
+        if "振分PL項目" in result_vis.columns and (
+            "出金額" in result_vis.columns or "入金額" in result_vis.columns
         ):
-            agg = aggregate_by_pl(result)
+            agg = aggregate_by_pl(result_vis)
             if agg.empty:
                 st.info("集計できる行がありません。")
             else:
@@ -585,7 +831,7 @@ with tab1:
             " 下の表で **判断理由** と **今後の仕分けメモ** を追記し、"
             " 一番右の **「社長へ渡す…」** からCSVを出力して共有・Cursor でマスタ更新に使えます。"
         )
-        review_base = result[result["分類結果"].isin(["要確認", "判断不能"])].copy()
+        review_base = result_vis[result_vis["分類結果"].isin(["要確認", "判断不能"])].copy()
         if review_base.empty:
             st.info("要確認・判断不能の行はありません。")
             edited_review = None
@@ -613,8 +859,7 @@ with tab1:
                 key="review_rows_editor",
             )
 
-        stamp = datetime.now().strftime("%Y%m%d_%H%M")
-        pl_only_df = _dataframe_pl_classified_rows(result)
+        pl_only_df = _dataframe_pl_classified_rows(result_vis)
         csv_full = result.to_csv(index=False).encode("utf-8-sig")
 
         dl1, dl2, dl3 = st.columns(3)
@@ -705,11 +950,3 @@ with tab2:
                     )
             except Exception as e:
                 st.error(f"読み込みまたは集計に失敗しました: {e}")
-
-st.divider()
-st.markdown("##### 次の拡張（要件定義書との対応）")
-st.markdown(
-    "- Googleスプレッドシート連携・画像OCR・学習用マスタ更新は未実装のMVPです。\n"
-    "- **halka_AI** はあおぞら／**マネフォ・カード利用明細CSV（公式列）**／手動列名。横浜信金・エネフリの取込は行いません。\n"
-    "- マスタは **`halka_master.csv`**（送付いただいた科目・店舗ベースの初版）。**APｱﾌﾟﾗｽ** は摘要一致時に **出金50%按分** します。"
-)
