@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import io
 from datetime import datetime
 from pathlib import Path
 
@@ -229,6 +230,20 @@ def _pl_classified_csv_bytes(df: pd.DataFrame) -> bytes:
     return out.to_csv(index=False).encode("utf-8-sig")
 
 
+def _enex_pl_bundle_csv_bytes(
+    detail_display: pd.DataFrame, by_base: pd.DataFrame
+) -> bytes:
+    """エネフリの「PL分類済みのみ」用: 全明細（画面列）と拠点別を1つの UTF-8 CSV に連結。"""
+    buf = io.StringIO()
+    buf.write("全明細（振分結果付き）\n")
+    detail_display.to_csv(buf, index=False)
+    buf.write("\n")
+    buf.write("エネフリ：拠点別（車番計）\n")
+    if not by_base.empty:
+        by_base.to_csv(buf, index=False)
+    return buf.getvalue().encode("utf-8-sig")
+
+
 st.set_page_config(page_title="本部経費処理（MVP）", layout="wide")
 st.title("本部経費処理 — 月次振り分け（MVP）")
 st.caption(
@@ -263,48 +278,24 @@ with st.sidebar:
             "エネクスフリート（請求書PDF・本部カード0001〜0004）",
             "手動で列名を指定",
         ],
-        help="銀行・カードのダウンロードCSVは Shift-JIS（cp932）のことが多いです（自動で utf-8/cp932 を試行）。",
         key="format_preset",
     )
     if format_preset == "あおぞらネット銀行（法人口座・標準CSV）":
-        st.info("列名は **日付・摘要・入金金額・出金金額・残高・メモ**（あおぞら標準）で読みます。")
         date_col = "日付"
         summary_col = "摘要"
         in_col = "入金金額"
         out_col = "出金金額"
     elif format_preset == "アメックス（activity CSV）":
-        st.info(
-            "列は **ご利用日・データ処理日・ご利用内容・金額**（公式 activity 明細）です。"
-            " **金額**はカンマ付きのため自動で数値化し、マイナス（振替等）は集計から除外します。"
-        )
         date_col = "ご利用日"
         summary_col = "ご利用内容"
         in_col = ""
         out_col = ""
     elif format_preset == "横浜信用金庫（入出金明細・CSV／Excel）":
-        st.info(
-            "**CSV** または **Excel（.xlsx）** に対応。"
-            " Excel は先頭に表題行があっても、**日付・入金・出金** が並ぶ行をヘッダとして自動検出します。"
-            " 列は **日付・科目・支払先・摘要・入金・出金・計**（入出金明細）を想定。"
-            " **本部マスタ**（店舗計上の除外・中退共6万・日新火災6千固定）を自動適用し、除外行は **取込対象外** とします。"
-        )
         date_col = "日付"
         summary_col = "摘要"
         in_col = "入金"
         out_col = "出金"
     elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
-        st.warning(
-            "**本番の取込は「横浜信用金庫（入出金明細・CSV／Excel）」を最優先してください。**"
-            " 通帳スキャンは罫線・活字・かすれで **OCRが大きく外れる**ことがあり、"
-            " 手元通帳と一致しない結果は仕様上よく起こります。"
-            " スキャンはあくまで補助として割り切り、**CSVまたは手入力**で確定するのが確実です。"
-        )
-        st.info(
-            "**スキャンPDF**は **EasyOCR を先に試行**（`pip install easyocr`）し、"
-            " ダメなときだけ Tesseract にフォールバックします。"
-            " 日付・金額が読めない行は **不明／要確認**、既定は **確定** 行のみ振分です。"
-            " 本部マスタ（除外・固定額）は、読めた行に適用されます。"
-        )
         yokohama_ocr_include_review = st.checkbox(
             "OCRで「要確認」と判定された行も振り分けに含める",
             value=False,
@@ -315,16 +306,6 @@ with st.sidebar:
         in_col = ""
         out_col = ""
     elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
-        st.info(
-            "**エネクスフリート（エネオス）**の請求書PDFをアップロード。"
-            " **（車番　計）** 行の金額を **PDFに出てくるカード番号すべて** で読みます。"
-            " **PyMuPDF** が必要です（`pip install pymupdf`）。"
-        )
-        st.caption(
-            "**拠点**はPDFのカード番号から自動で付きます。"
-            " **カードマスタCSV（任意）**で **車両番号・スタッフ名**（必要なら拠点の修正）を上書きできます。"
-            " 列: **カード番号, 拠点, 車両番号, スタッフ名**（番号は1や01でも可）。"
-        )
         enex_master_up = st.file_uploader(
             "エネフリ・カードマスタCSV（任意）",
             type=["csv"],
@@ -367,28 +348,13 @@ with st.sidebar:
         in_col = st.text_input("入金額の列名", value="入金額")
         out_col = st.text_input("出金額の列名", value="出金額")
 
-    with st.expander("詳細設定（データソース・除外ルール）", expanded=False):
-        st.caption("通常はこのままで問題ありません。変更するときだけ開いてください。")
-        source_col = st.text_input("データソース列（任意）", value="データソース区分")
-        use_source = st.checkbox("マスタのデータソース区分で絞り込む", value=False)
-        add_src_auto = st.checkbox(
-            "プリセットに応じてデータソース区分を自動付与（列が無いとき：あおぞら／アメックス／横浜信金／エネフリ）",
-            value=True,
-        )
-        exclude_orico = st.checkbox(
-            "摘要に「オリコ」を含む行を除外（オリコカード明細を振分対象から外す）",
-            value=True,
-        )
-        exclude_amex_hq_noise = st.checkbox(
-            "アメックス本部向け: 前回口座振替・ソフトバンク全社一括（約17〜21万）を除外",
-            value=True,
-            help="前回分口座振替金額は振分対象外。ソフトバンクＭの全社一括は各店按分済みのため除外。",
-        )
-        exclude_aozora_hq_noise = st.checkbox(
-            "あおぞら本部向け: 資金移動・役員振込・支給控除済み・PE納付・社会保険料を除外",
-            value=True,
-            help="カ）ジヨン系振替、横浜信金への資金移動、三菱UFJ・シブヤケイタ、楽天・石田、PE納付、社会保険料（半角表記含む）。",
-        )
+    # 詳細設定（データソース・除外ルール）は非表示。既定は従来の expander 既定値と同じ。
+    source_col = "データソース区分"
+    use_source = False
+    add_src_auto = True
+    exclude_orico = True
+    exclude_amex_hq_noise = True
+    exclude_aozora_hq_noise = True
 
     st.divider()
     st.subheader("② マスタ（ドロップダウン）")
@@ -399,11 +365,6 @@ with st.sidebar:
     )
     pl_opts = pl_dropdown_options(full_list=full_pl)
 
-    st.caption(
-        "**➕ 行を追加** または表の **+** で行を追加。**行番号**を指定して **削除** もできます。"
-        " キーワード・PL・金額レンジは表で編集（上から優先・長いキーワード優先）。"
-        " 支給控除の人件費合計は **タブ②（支給控除）** の項目名と対応させています。"
-    )
     up_master = st.file_uploader("マスタをCSVで上書き読込（任意）", type=["csv"], key="up_master")
     if up_master is not None:
         try:
@@ -478,10 +439,6 @@ tab1, tab2 = st.tabs(
 
 with tab1:
     st.markdown("### 読み込み（取引データ）")
-    st.info(
-        "**あおぞら**／**アメックス**はCSV、**横浜信金**は **CSV または xlsx**、**横浜信金（スキャン）**／**エネフリ**は**PDF**。"
-        " 左のフォーマットを選んでからアップロードしてください。"
-    )
     tx_file = st.file_uploader(
         "取引データ（CSV／Excel／PDF）",
         type=["csv", "pdf", "xlsx", "xlsm"],
@@ -821,7 +778,15 @@ with tab1:
             data=csv_full,
             file_name=f"本部経費_振分結果_全明細_{stamp}.csv",
         )
-        if len(pl_only_df) > 0:
+        if _enex_ui:
+            _enex_by_base = summarize_enex_by_base(result)
+            dl2.download_button(
+                "PL分類済みのみCSV",
+                data=_enex_pl_bundle_csv_bytes(display_all, _enex_by_base),
+                file_name=f"本部経費_エネフリ_全明細と拠点別_{stamp}.csv",
+                help="エネフリ専用: 全明細（振分結果付き・画面と同じ列）と拠点別（車番計）のみ。",
+            )
+        elif len(pl_only_df) > 0:
             dl2.download_button(
                 "PL分類済みのみCSV",
                 data=_pl_classified_csv_bytes(pl_only_df),
