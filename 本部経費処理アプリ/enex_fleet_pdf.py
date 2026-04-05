@@ -1,8 +1,9 @@
 """
 エネオス法人ガソリンカード（エネクスフリート株式会社）請求書PDFから、
-本部対象カード（既定: 0001〜0004）について **（車番　計）** 行の金額のみを抽出する。
+**（車番　計）** 行の金額をカード別に抽出する（既定は **PDFに出てくるカードはすべて**）。
 
 給油明細の1件ごとの金額は使わず、請求書上のカード別「車番計」合計のみを参照する。
+先頭4桁が 2000〜2099 の行は日付行とみなしカード番号にしない。
 テキスト抽出は PyMuPDF（fitz）。
 """
 from __future__ import annotations
@@ -20,7 +21,7 @@ except ImportError as e:  # pragma: no cover
 else:
     _IMPORT_ERR = None
 
-# 本部（ジョン様設定）
+# 互換・明示フィルタ用（hq_cards に渡すときのみ使用）
 DEFAULT_HQ_CARDS = frozenset({"0001", "0002", "0003", "0004"})
 
 _YEAR_INVOICE_RE = re.compile(r"(20\d{2})年\s*\d{1,2}月")
@@ -28,6 +29,14 @@ _YEAR_IN_FILENAME_RE = re.compile(r"_(\d{4})(\d{2})(\d{2})\.pdf", re.I)
 _SHIMEBI_RE = re.compile(r"締日\s*(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日")
 _DETAIL_HEAD_RE = re.compile(r"^\s*(\d{4})\s+(\d{1,2})\s+(\d{1,2})\s+")
 _SHABAN_KEI_RE = re.compile(r"（\s*車番\s*計\s*）")
+
+
+def _first_token_is_likely_calendar_year(token: str) -> bool:
+    """明細行先頭の4桁が 2000〜2099 なら西暦年とみなし、カード番号に使わない。"""
+    if len(token) != 4 or not token.isdigit():
+        return False
+    n = int(token)
+    return 2000 <= n <= 2099
 
 
 def _extract_year(full_text: str, filename: str) -> int:
@@ -76,11 +85,13 @@ def parse_enex_fleet_pdf_bytes(
     hq_cards: frozenset[str] | None = None,
 ) -> pd.DataFrame:
     """
-    請求書PDFから本部カードごとの **（車番　計）** 行の金額のみを1行ずつ抽出する。
+    請求書PDFからカードごとの **（車番　計）** 行の金額のみを1行ずつ抽出する。
 
     明細行の合計ではなく、PDF上「車番　計」の横に出る **カード単位の合計金額** を参照する。
-    直前に現れた本部カード（0001〜0004）の明細ブロックに紐づける。他カード（0101等）の明細が
-    挟まったあとは紐づけをリセットする。
+    **hq_cards** が ``None``（既定）のときは PDF に現れるカード番号をすべて対象にする。
+    集合を渡したときはそのカードに限定する。
+
+    直前に現れたカード明細ブロックに紐づける。別カードの明細が挟まったあとは紐づけをリセットする。
     """
     if fitz is None:
         raise RuntimeError(
@@ -95,7 +106,6 @@ def parse_enex_fleet_pdf_bytes(
 
     year = _extract_year(full_text, filename)
     date_str = _extract_invoice_date_str(full_text, filename, year)
-    cards = hq_cards if hq_cards is not None else DEFAULT_HQ_CARDS
     rows: list[dict] = []
     last_hq_card: str | None = None
 
@@ -103,7 +113,12 @@ def parse_enex_fleet_pdf_bytes(
         dm = _DETAIL_HEAD_RE.match(line)
         if dm:
             card = dm.group(1)
-            last_hq_card = card if card in cards else None
+            if _first_token_is_likely_calendar_year(card):
+                last_hq_card = None
+            elif hq_cards is not None and card not in hq_cards:
+                last_hq_card = None
+            else:
+                last_hq_card = card
             continue
 
         amt = _amount_from_shaban_kei_line(line)

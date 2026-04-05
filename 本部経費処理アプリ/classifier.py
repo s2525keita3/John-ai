@@ -169,13 +169,29 @@ def classify_dataframe(
 
 
 def aggregate_by_pl(df: pd.DataFrame) -> pd.DataFrame:
-    """確定・要確認も含め、振分PL項目ごとに出金合計（簡易）。取込対象外は集計から除く。"""
-    if "振分PL項目" not in df.columns or "出金額" not in df.columns:
+    """確定・要確認も含め、振分PL項目ごとに出金・入金合計（簡易）。取込対象外は集計から除く。"""
+    if "振分PL項目" not in df.columns:
+        return pd.DataFrame()
+    has_out = "出金額" in df.columns
+    has_in = "入金額" in df.columns
+    if not has_out and not has_in:
         return pd.DataFrame()
     tmp = df.copy()
     if "取込対象外" in tmp.columns:
         tmp = tmp[~tmp["取込対象外"].fillna(False)]
-    tmp["_金"] = pd.to_numeric(tmp["出金額"], errors="coerce").fillna(0).abs()
-    g = tmp.groupby("振分PL項目", dropna=False)["_金"].sum().reset_index()
-    g.columns = ["自社PL勘定項目", "合計額（出金）"]
-    return g.sort_values("合計額（出金）", ascending=False)
+    if has_out:
+        tmp["_出金"] = pd.to_numeric(tmp["出金額"], errors="coerce").fillna(0).abs()
+    else:
+        tmp["_出金"] = 0.0
+    if has_in:
+        tmp["_入金"] = pd.to_numeric(tmp["入金額"], errors="coerce").fillna(0).abs()
+    else:
+        tmp["_入金"] = 0.0
+    g = (
+        tmp.groupby("振分PL項目", dropna=False)
+        .agg({"_出金": "sum", "_入金": "sum"})
+        .reset_index()
+    )
+    g.columns = ["自社PL勘定項目", "合計額（出金）", "合計額（入金）"]
+    g["_sort"] = g["合計額（出金）"] + g["合計額（入金）"]
+    return g.sort_values("_sort", ascending=False).drop(columns=["_sort"])

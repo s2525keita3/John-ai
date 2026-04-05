@@ -19,6 +19,11 @@ from classifier import (
 from csv_loader import read_csv_auto
 from pl_accounts import pl_dropdown_options
 from aozora_filters import filter_aozora_hq_noise
+from enex_fleet_master import (
+    merge_enex_extract_with_master,
+    summarize_enex_by_base,
+    summarize_enex_by_staff,
+)
 from enex_fleet_pdf import (
     filter_amex_hq_noise,
     filter_exclude_orico,
@@ -35,6 +40,12 @@ from yokohama_hq_rules import apply_yokohama_hq_master_rules
 from yokohama_scan_pdf import extract_yokohama_scan_pdf, scan_df_to_bank_work
 
 _ROOT = Path(__file__).resolve().parent
+
+# 本部経費の計上・入力用スプレッドシート
+HONBU_KEIHI_SPREADSHEET_URL = (
+    "https://docs.google.com/spreadsheets/d/1rPs01xlB1Iv8a8ovRH8eSIDJGvqCa1mn5SLM2SwL71A/"
+    "edit?gid=1846887392#gid=1846887392"
+)
 
 # 支給控除一覧：氏名行の列見出しに含まれるキーワードで本部対象列を特定
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
@@ -193,9 +204,20 @@ st.caption(
     " 確定／要確認／判断不能の3区分（要件定義書 v2 ステップ4）"
 )
 
+with st.container(border=True):
+    st.markdown("##### 本部経費のスプレッドシート（入力・計上先）")
+    st.caption("振分結果を反映したり、本部経費をまとめるときは、まずここを開いてください。")
+    st.link_button(
+        "Google スプレッドシートを開く",
+        HONBU_KEIHI_SPREADSHEET_URL,
+        use_container_width=True,
+        type="primary",
+    )
+
 if "master_work" not in st.session_state:
     st.session_state.master_work = pd.read_csv(_ROOT / "sample_master.csv", encoding="utf-8-sig")
 
+enex_master_df: pd.DataFrame | None = None
 with st.sidebar:
     st.subheader("取引CSVの列名")
     yokohama_ocr_include_review = False
@@ -263,8 +285,28 @@ with st.sidebar:
     elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
         st.info(
             "**エネクスフリート（エネオス）**の請求書PDFをアップロード。"
-            " **（車番　計）** 行の金額をカードごとに読み、**0001〜0004** の合計のみ集計します（他カードは対象外）。"
+            " **（車番　計）** 行の金額を **PDFに出てくるカード番号すべて** で読みます。"
             " **PyMuPDF** が必要です（`pip install pymupdf`）。"
+        )
+        st.caption(
+            "カードマスタCSV（任意）で **拠点・スタッフ** を紐づけ、**拠点別・スタッフ別** に集計できます。"
+            " 列: **カード番号, 拠点, 車両番号, スタッフ名**（番号は1や01でも可）。"
+        )
+        enex_master_up = st.file_uploader(
+            "エネフリ・カードマスタCSV（任意）",
+            type=["csv"],
+            key="enex_card_master_upload",
+        )
+        if enex_master_up is not None:
+            try:
+                enex_master_df = read_csv_auto(enex_master_up.read())
+            except Exception as e:
+                st.error(f"カードマスタの読み込みに失敗しました: {e}")
+        st.download_button(
+            "サンプル・カードマスタCSV",
+            data=(_ROOT / "sample_enex_fleet_card_master.csv").read_bytes(),
+            file_name="sample_enex_fleet_card_master.csv",
+            key="dl_sample_enex_master",
         )
         date_col = ""
         summary_col = ""
@@ -415,22 +457,40 @@ with tab2:
                 st.stop()
             try:
                 work = parse_enex_fleet_pdf_bytes(raw, filename=name)
+                if enex_master_df is not None and not enex_master_df.empty:
+                    work = merge_enex_extract_with_master(work, enex_master_df)
             except Exception as e:
                 st.error(f"PDFの読み込みに失敗しました: {e}")
                 st.stop()
             if work.empty:
                 st.error(
-                    "本部カード（0001〜0004）の **（車番　計）** が1件も取れませんでした。"
-                    " PDFのテキストが取れているか、別版PDFで試してください。"
+                    "対象カードの **（車番　計）** が1件も取れませんでした。"
+                    " PDFのテキスト・カードマスタの番号（4桁）を確認するか、別版PDFで試してください。"
                 )
                 st.stop()
             total_enex = float(pd.to_numeric(work["出金額"], errors="coerce").fillna(0).sum())
+            _metric_help = (
+                "PDFの「（車番　計）」のみ。カードマスタありのときはマスタ列挙カードを対象にします。"
+            )
             st.metric(
-                "エネフリ請求書・本部カード（車番計）の合計",
+                "エネフリ請求書・カード別（車番計）の合計",
                 f"{total_enex:,.0f} 円",
-                help="PDFの「（車番　計）」行の金額のみを参照し、カード0001〜0004ごとに1行ずつ合計しています。",
+                help=_metric_help,
             )
             st.caption(f"抽出: **{len(work)}** 行（カードあたり最大1件・車番計ベース）")
+            if (
+                enex_master_df is not None
+                and not enex_master_df.empty
+                and "拠点" in work.columns
+            ):
+                sb = summarize_enex_by_base(work)
+                ss = summarize_enex_by_staff(work)
+                if not sb.empty:
+                    st.subheader("エネフリ：拠点別（車番計）")
+                    st.dataframe(sb, width="stretch", hide_index=True)
+                if not ss.empty:
+                    st.subheader("エネフリ：スタッフ別（車番計）")
+                    st.dataframe(ss, width="stretch", hide_index=True)
             tx_df = None
         elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
             if not name.lower().endswith(".pdf"):
@@ -636,12 +696,19 @@ with tab2:
             hide_index=True,
         )
 
-        st.subheader("勘定項目別 合計（出金額ベース・簡易）")
-        if "出金額" in result.columns:
+        st.subheader("勘定項目別 合計（出金・入金・簡易）")
+        if "振分PL項目" in result.columns and (
+            "出金額" in result.columns or "入金額" in result.columns
+        ):
             agg = aggregate_by_pl(result)
-            st.dataframe(agg, use_container_width=True, hide_index=True)
+            if agg.empty:
+                st.info("集計できる行がありません。")
+            else:
+                st.dataframe(agg, use_container_width=True, hide_index=True)
         else:
-            st.warning("「出金額」列がありません。")
+            st.warning(
+                "「振分PL項目」および「出金額」または「入金額」の列が必要です。"
+            )
 
         st.divider()
         st.subheader("要確認・判断不能（レビュー・自由記載）")

@@ -561,12 +561,19 @@ with tab3:
             hide_index=True,
         )
 
-        st.subheader("勘定項目別 合計（出金額ベース・簡易）")
-        if "出金額" in result.columns:
+        st.subheader("勘定項目別 合計（出金・入金・簡易）")
+        if "振分PL項目" in result.columns and (
+            "出金額" in result.columns or "入金額" in result.columns
+        ):
             agg = aggregate_by_pl(result)
-            st.dataframe(agg, use_container_width=True, hide_index=True)
+            if agg.empty:
+                st.info("集計できる行がありません。")
+            else:
+                st.dataframe(agg, use_container_width=True, hide_index=True)
         else:
-            st.warning("「出金額」列がありません。")
+            st.warning(
+                "「振分PL項目」および「出金額」または「入金額」の列が必要です。"
+            )
 
         st.divider()
         st.subheader("要確認・判断不能（レビュー・自由記載）")
