@@ -30,8 +30,15 @@
 cd 本部経費処理アプリ
 pip install -r requirements-local.txt
 streamlit run app.py
-# 同一仕様の別エントリ（halka_AI 用）:
-# streamlit run halka_AI.py
+```
+
+**halka_AI** は **`halka_ai/`** フォルダの独立パッケージです（本部経費処理アプリとはコード共有しません）。
+
+```bash
+cd ..   # John_ai（リポジトリルート）
+pip install -r halka_ai/requirements-local.txt
+streamlit run halka_ai/app.py
+# または Streamlit Cloud: Main file path に halka_ai_app.py
 ```
 
 **横浜信金スキャンPDF（OCR）:** `pip install -r requirements-local.txt` で **pytesseract** が入ります。**Tesseract 本体**は別途 PATH に必要です（未導入だと EasyOCR にフォールバック）。

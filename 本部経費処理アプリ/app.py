@@ -263,24 +263,8 @@ with st.sidebar:
             help="カ）ジヨン系振替、横浜信金への資金移動、三菱UFJ・シブヤケイタ、楽天・石田、PE納付、社会保険料（半角表記含む）。",
         )
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["① 取引を読み込む", "② マスタ（ドロップダウン）", "③ 結果", "④ 本部人件費（支給控除）"]
-)
-
-with tab1:
-    st.markdown("### 取引データ（CSV / PDF）")
-    st.info(
-        "**あおぞら**／**アメックス**はCSV、**横浜信金**は **CSV または xlsx**、**横浜信金（スキャン）**／**エネフリ**は**PDF**。"
-        " 左のフォーマットを選んでからアップロードしてください。"
-    )
-    tx_file = st.file_uploader(
-        "取引データ（CSV／Excel／PDF）",
-        type=["csv", "pdf", "xlsx", "xlsm"],
-        key="tx",
-    )
-
-with tab2:
-    st.markdown("### 振り分けマスタ")
+    st.divider()
+    st.subheader("② マスタ（ドロップダウン）")
     full_pl = st.checkbox(
         "自社PLは「全項目」をドロップダウンに表示",
         value=True,
@@ -291,7 +275,7 @@ with tab2:
     st.caption(
         "**➕ 行を追加** または表の **+** で行を追加。**行番号**を指定して **削除** もできます。"
         " キーワード・PL・金額レンジは表で編集（上から優先・長いキーワード優先）。"
-        " 支給控除の人件費合計は **タブ④** の項目名と対応させています。"
+        " 支給控除の人件費合計は **タブ③** の項目名と対応させています。"
     )
     up_master = st.file_uploader("マスタをCSVで上書き読込（任意）", type=["csv"], key="up_master")
     if up_master is not None:
@@ -304,7 +288,7 @@ with tab2:
 
     mw = st.session_state.master_work
     n_master = len(mw)
-    ac1, ac2, ac3 = st.columns([1, 1, 2])
+    ac1, ac2 = st.columns(2)
     with ac1:
         if st.button("➕ 行を追加", type="primary", key="master_add_row"):
             base_cols = list(mw.columns) if not mw.empty else [
@@ -326,17 +310,14 @@ with tab2:
     with ac2:
         max_row = max(1, n_master)
         del_no = st.number_input(
-            "削除する行番号（1始まり）",
+            "削除行（1始まり）",
             min_value=1,
             max_value=max_row,
             value=min(1, max_row),
             key="master_del_row_no",
             disabled=n_master == 0,
         )
-    with ac3:
-        st.write("")
-        st.write("")
-        if st.button("🗑 上記の行を削除", key="master_del_row_btn", disabled=n_master == 0):
+        if st.button("🗑 削除", key="master_del_row_btn", disabled=n_master == 0):
             idx = int(del_no) - 1
             st.session_state.master_work = st.session_state.master_work.drop(index=idx).reset_index(drop=True)
             st.rerun()
@@ -364,7 +345,24 @@ with tab2:
     sample_bytes = (_ROOT / "sample_master.csv").read_bytes()
     st.download_button("サンプルマスタ（CSV）をダウンロード", data=sample_bytes, file_name="sample_master.csv")
 
-with tab3:
+tab1, tab2, tab3 = st.tabs(
+    ["① 読み込み", "② 振り分け実行・結果", "③ 支給控除読み込み"]
+)
+
+with tab1:
+    st.markdown("### 読み込み（取引データ）")
+    st.info(
+        "**あおぞら**／**アメックス**はCSV、**横浜信金**は **CSV または xlsx**、**横浜信金（スキャン）**／**エネフリ**は**PDF**。"
+        " 左のフォーマットを選んでからアップロードしてください。"
+    )
+    tx_file = st.file_uploader(
+        "取引データ（CSV／Excel／PDF）",
+        type=["csv", "pdf", "xlsx", "xlsm"],
+        key="tx",
+    )
+
+with tab2:
+    st.markdown("### 振り分け実行・結果")
     run = st.button("振り分けを実行", type="primary")
 
     if run:
@@ -676,10 +674,12 @@ with tab3:
             dl3.caption("レビュー対象行があるときにダウンロードできます。")
 
     else:
-        st.info("タブ①で取引データをアップロードし、タブ②でマスタを確認してから「振り分けを実行」を押してください。")
+        st.info(
+            "タブ①で取引データを読み込み、左サイドバーの **② マスタ** を確認してから「振り分けを実行」を押してください。"
+        )
 
-with tab4:
-    st.markdown("### 支給控除一覧表（部門別）→ 本部人件費")
+with tab3:
+    st.markdown("### 支給控除の読み込み・本部人件費")
     st.caption(
         "「支給合計」＋会社負担社保（健康・介護・厚生・子ども・子育て）を **人件費(支給額,健康,介護,厚生,子ども)** に集計します。"
         " **表の1行目** を氏名・列見出し行として参照します（下でキーワードを選択）。"

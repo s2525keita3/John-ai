@@ -1,0 +1,4 @@
+# ローカル開発: Python を保存するとブラウザ側が自動で再実行（リロード）されます。
+# https://docs.streamlit.io/develop/concepts/configuration/options
+[server]
+runOnSave = true

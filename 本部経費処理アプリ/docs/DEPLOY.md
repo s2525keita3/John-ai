@@ -30,8 +30,8 @@
    | Branch | `main`（または利用中のブランチ） |
    | Main file path | **A の場合（推奨）:** `honbu_keihi_app.py`（ASCII のみ・ルート）<br>**従来:** `本部経費処理アプリ/app.py` |
 
-   **halka_AI エントリで公開したい場合**は Main file path を  
-   `本部経費処理アプリ/halka_AI.py`（A の場合）にする。
+   **halka_AI を公開する場合**は Main file path をリポジトリ直下の  
+   **`halka_ai_app.py`**（ASCII・本体は **`halka_ai/`** パッケージ。本部経費処理アプリとは別）にする。
 
 4. **Deploy** を押す。ビルド完了後に **`https://xxxx.streamlit.app`** が発行されます。
 

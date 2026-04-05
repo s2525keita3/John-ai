@@ -1,0 +1,4 @@
+# halka_AI 単体でローカル実行するとき（本部経費処理アプリの requirements とは独立）
+streamlit>=1.29
+pandas>=2.0
+openpyxl>=3.1

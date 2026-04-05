@@ -1,7 +1,12 @@
 """
-halka_AI — 本部経費処理（app.py と同一ロジックの別エントリ）
-要件: 本部経費処理 自動化 要件定義書 v2 のステップ2〜4 を簡易実装
-起動: streamlit run halka_AI.py
+halka_AI — 本部経費処理（**本部経費処理アプリ／JOHN とは独立したパッケージ**）
+
+- 取込: あおぞらCSV、マネフォカード利用明細CSV（公式列／旧activity互換）、手動列名
+- 横浜信用金庫・エネクスフリートは経費計算に使用しない
+- 既定マスタ: 同梱の halka_master.csv（タブ②で編集・CSV上書き可）
+- 摘要に APｱﾌﾟﾗｽ 等が含まれる行は出金額を50%按分（リース料・複合機按分）
+
+起動: リポジトリルートで `streamlit run halka_ai/app.py` または `streamlit run halka_ai_app.py`
 """
 from __future__ import annotations
 
@@ -20,36 +25,85 @@ from classifier import (
 from csv_loader import read_csv_auto
 from pl_accounts import pl_dropdown_options
 from aozora_filters import filter_aozora_hq_noise
-from enex_fleet_pdf import (
-    filter_amex_hq_noise,
-    filter_exclude_orico,
-    parse_enex_fleet_pdf_bytes,
-)
+from filters import filter_exclude_orico
 from payroll_hq import (
     DEFAULT_NAME_ROW,
     RESULT_LABEL,
     aggregate_hq_personnel_cost,
     load_payroll_matrix,
 )
-from yokohama_excel import read_yokohama_bank_excel
-from yokohama_hq_rules import apply_yokohama_hq_master_rules
-from yokohama_scan_pdf import extract_yokohama_scan_pdf, scan_df_to_bank_work
 
 _ROOT = Path(__file__).resolve().parent
+_HALKA_MASTER_CSV = _ROOT / "halka_master.csv"
+
+# マネフォクラウド「カード利用明細」CSV（公式列 or 旧アメックス activity 互換）
+_PRESET_MF_CARD = "マネフォカード（利用明細CSV）"
+
+# 摘要に含まれたら出金額を 50% する（複合機リース等の按分）
+_HALF_AMOUNT_SUMMARY_MARKERS: tuple[str, ...] = (
+    "APｱﾌﾟﾗｽ",
+    "APアプラス",
+)
 
 # 支給控除一覧：氏名行の列見出しに含まれるキーワードで本部対象列を特定
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
 
 
-def _combine_yokohama_summary(df: pd.DataFrame) -> pd.Series:
-    """科目・支払先・摘要を結合し、キーワード照合に使う（いずれか欠けても可）。"""
-    cols = [c for c in ("科目", "支払先", "摘要") if c in df.columns]
-    if not cols:
-        return pd.Series([""] * len(df), index=df.index)
-    acc = df[cols[0]].fillna("").astype(str).str.strip()
-    for c in cols[1:]:
-        acc = acc + " " + df[c].fillna("").astype(str).str.strip()
-    return acc.str.replace(r"\s+", " ", regex=True).str.strip()
+def _normalize_halka_master_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """空欄だらけの列が float 推論され data_editor と衝突するのを防ぐ。"""
+    out = df.copy()
+    for col in ("摘要キーワード", "自社PL勘定項目", "データソース区分"):
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: "" if pd.isna(x) else str(x))
+    for col in ("金額下限", "金額上限"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
+
+
+def _moneyforward_card_df_to_work(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    マネフォ「カード利用明細」公式CSV → 日付・摘要・出金額。
+    摘要は 支払先（英字等）と 支払先（漢字）を結合（マスタのキーワード照合用）。
+    """
+    work = df.copy()
+    pay = (
+        work["支払先"].fillna("")
+        if "支払先" in work.columns
+        else pd.Series("", index=work.index)
+    )
+    pay = pay.astype(str).str.strip()
+    kanji = (
+        work["支払先（漢字）"].fillna("")
+        if "支払先（漢字）" in work.columns
+        else pd.Series("", index=work.index)
+    )
+    kanji = kanji.astype(str).str.strip()
+    combined = (pay + " " + kanji).str.replace(r"\s+", " ", regex=True).str.strip()
+    work["摘要"] = combined
+    dt = pd.to_datetime(work["取引日時"], errors="coerce")
+    work["日付"] = dt.dt.strftime("%Y%m%d")
+    work.loc[dt.isna(), "日付"] = ""
+    amt = pd.to_numeric(work["金額"], errors="coerce").fillna(0.0)
+    work["出金額"] = amt.abs()
+    return work
+
+
+def _apply_halka_ap_plus_half(work: pd.DataFrame) -> pd.DataFrame:
+    """APアプラス（半角表記含む）の摘要は出金を50%にし、按分メモを付与。"""
+    if work.empty or "摘要" not in work.columns or "出金額" not in work.columns:
+        return work
+    w = work.copy()
+    s = w["摘要"].fillna("").astype(str)
+    mask = s.map(lambda t: any(m in t for m in _HALF_AMOUNT_SUMMARY_MARKERS))
+    if not mask.any():
+        return w
+    amt = pd.to_numeric(w["出金額"], errors="coerce").fillna(0.0)
+    w.loc[mask, "出金額"] = (amt[mask] * 0.5).round(0)
+    if "按分メモ" not in w.columns:
+        w["按分メモ"] = ""
+    w.loc[mask, "按分メモ"] = "APアプラス50%按分（複合機等）"
+    return w
 
 
 # 結果テーブル（画面）では出さない列（CSVダウンロードには残す）
@@ -59,16 +113,6 @@ _RESULT_TABLE_OMIT_COLS = (
     "海外通貨利用金額",
     "換算レート",
     "メモ",
-)
-
-# 横浜信金（CSV／Excel／スキャン）の全明細表示では隠す（ダウンロード「全明細」には残す）
-_YOKOHAMA_DISPLAY_EXTRA_OMIT = (
-    "計",
-    "取込対象外",
-    "取込対象外理由",
-    "本部調整メモ",
-    "出金額_通帳",
-    "科目",
 )
 
 
@@ -156,23 +200,21 @@ st.title("halka_AI — 本部経費処理（月次振り分け）")
 st.caption(
     "取引CSVをアップロードし、マスタ（摘要キーワード→自社PL）で自動振り分けします。"
     " 確定／要確認／判断不能の3区分（要件定義書 v2 ステップ4）。"
-    " `app.py` と同じ処理です。"
+    " **halka_AI** はあおぞら・マネフォカード利用明細・手動列名。既定マスタは **halka_master.csv** です。"
 )
 
 if "halka_master_work" not in st.session_state:
-    st.session_state.halka_master_work = pd.read_csv(_ROOT / "sample_master.csv", encoding="utf-8-sig")
+    st.session_state.halka_master_work = _normalize_halka_master_dataframe(
+        pd.read_csv(_HALKA_MASTER_CSV, encoding="utf-8-sig")
+    )
 
 with st.sidebar:
     st.subheader("取引CSVの列名")
-    yokohama_ocr_include_review = False
     format_preset = st.selectbox(
         "フォーマット",
         [
             "あおぞらネット銀行（法人口座・標準CSV）",
-            "アメックス（activity CSV）",
-            "横浜信用金庫（入出金明細・CSV／Excel）",
-            "横浜信用金庫（通帳スキャンPDF・OCR）",
-            "エネクスフリート（請求書PDF・本部カード0001〜0004）",
+            _PRESET_MF_CARD,
             "手動で列名を指定",
         ],
         help="銀行・カードのダウンロードCSVは Shift-JIS（cp932）のことが多いです（自動で utf-8/cp932 を試行）。",
@@ -184,53 +226,13 @@ with st.sidebar:
         summary_col = "摘要"
         in_col = "入金金額"
         out_col = "出金金額"
-    elif format_preset == "アメックス（activity CSV）":
+    elif format_preset == _PRESET_MF_CARD:
         st.info(
-            "列は **ご利用日・データ処理日・ご利用内容・金額**（公式 activity 明細）です。"
-            " **金額**はカンマ付きのため自動で数値化し、マイナス（振替等）は集計から除外します。"
-        )
-        date_col = "ご利用日"
-        summary_col = "ご利用内容"
-        in_col = ""
-        out_col = ""
-    elif format_preset == "横浜信用金庫（入出金明細・CSV／Excel）":
-        st.info(
-            "**CSV** または **Excel（.xlsx）** に対応。"
-            " Excel は先頭に表題行があっても、**日付・入金・出金** が並ぶ行をヘッダとして自動検出します。"
-            " 列は **日付・科目・支払先・摘要・入金・出金・計**（入出金明細）を想定。"
-            " **本部マスタ**（店舗計上の除外・中退共6万・日新火災6千固定）を自動適用し、除外行は **取込対象外** とします。"
-        )
-        date_col = "日付"
-        summary_col = "摘要"
-        in_col = "入金"
-        out_col = "出金"
-    elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
-        st.warning(
-            "**本番の取込は「横浜信用金庫（入出金明細・CSV／Excel）」を最優先してください。**"
-            " 通帳スキャンは罫線・活字・かすれで **OCRが大きく外れる**ことがあり、"
-            " 手元通帳と一致しない結果は仕様上よく起こります。"
-            " スキャンはあくまで補助として割り切り、**CSVまたは手入力**で確定するのが確実です。"
-        )
-        st.info(
-            "**スキャンPDF**は **EasyOCR を先に試行**（`pip install easyocr`）し、"
-            " ダメなときだけ Tesseract にフォールバックします。"
-            " 日付・金額が読めない行は **不明／要確認**、既定は **確定** 行のみ振分です。"
-            " 本部マスタ（除外・固定額）は、読めた行に適用されます。"
-        )
-        yokohama_ocr_include_review = st.checkbox(
-            "OCRで「要確認」と判定された行も振り分けに含める",
-            value=False,
-            key="yokohama_ocr_include_review",
-        )
-        date_col = ""
-        summary_col = ""
-        in_col = ""
-        out_col = ""
-    elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
-        st.info(
-            "**エネクスフリート（エネオス）**の請求書PDFをアップロード。"
-            " **（車番　計）** 行の金額をカードごとに読み、**0001〜0004** の合計のみ集計します（他カードは対象外）。"
-            " **PyMuPDF** が必要です（`pip install pymupdf`）。"
+            "**公式（推奨）:** マネフォ管理サイトの **カード利用明細** CSV。"
+            " **取引日時・支払先・支払先（漢字）・金額** など（ファイル名例: カード利用明細_*.csv）。"
+            " 金額はマイナスなので **絶対値** を出金として扱います。"
+            " **カード名義人** 列があれば結果に残ります（利用者の目安）。"
+            " **互換:** 旧 **ご利用日・ご利用内容・金額** のCSVも同じプリセットで読み込めます。"
         )
         date_col = ""
         summary_col = ""
@@ -247,22 +249,17 @@ with st.sidebar:
         source_col = st.text_input("データソース列（任意）", value="データソース区分")
         use_source = st.checkbox("マスタのデータソース区分で絞り込む", value=False)
         add_src_auto = st.checkbox(
-            "プリセットに応じてデータソース区分を自動付与（列が無いとき：あおぞら／アメックス／横浜信金／エネフリ）",
+            "プリセットに応じてデータソース区分を自動付与（列が無いとき：あおぞら／マネフォカード）",
             value=True,
         )
         exclude_orico = st.checkbox(
             "摘要に「オリコ」を含む行を除外（オリコカード明細を振分対象から外す）",
             value=True,
         )
-        exclude_amex_hq_noise = st.checkbox(
-            "アメックス本部向け: 前回口座振替・ソフトバンク全社一括（約17〜21万）を除外",
-            value=True,
-            help="前回分口座振替金額は振分対象外。ソフトバンクＭの全社一括は各店按分済みのため除外。",
-        )
         exclude_aozora_hq_noise = st.checkbox(
             "あおぞら本部向け: 資金移動・役員振込・支給控除済み・PE納付・社会保険料を除外",
             value=True,
-            help="カ）ジヨン系振替、横浜信金への資金移動、三菱UFJ・シブヤケイタ、楽天・石田、PE納付、社会保険料（半角表記含む）。",
+            help="カ）ジヨン系振替、三菱UFJ・シブヤケイタ、楽天・石田、PE納付、社会保険料（半角表記含む）。",
         )
 
 tab1, tab2, tab3, tab4 = st.tabs(
@@ -270,19 +267,24 @@ tab1, tab2, tab3, tab4 = st.tabs(
 )
 
 with tab1:
-    st.markdown("### 取引データ（CSV / PDF）")
+    st.markdown("### 取引データ（CSV）")
     st.info(
-        "**あおぞら**／**アメックス**はCSV、**横浜信金**は **CSV または xlsx**、**横浜信金（スキャン）**／**エネフリ**は**PDF**。"
-        " 左のフォーマットを選んでからアップロードしてください。"
+        "**あおぞら**／**マネフォ・カード利用明細**（**カード利用明細_*.csv**）はCSV。"
+        " **手動**は列名を左で指定。あおぞらの日付は **20260204** 形式の行もあります。"
+        " 横浜信用金庫・エネクスフリートの取込は行いません。"
     )
     tx_file = st.file_uploader(
-        "取引データ（CSV／Excel／PDF）",
-        type=["csv", "pdf", "xlsx", "xlsm"],
+        "取引データ（CSV）",
+        type=["csv"],
         key="tx",
     )
 
 with tab2:
-    st.markdown("### 振り分けマスタ")
+    st.markdown("### 振り分けマスタ（halka 専用）")
+    st.caption(
+        "既定は **`halka_master.csv`**（横浜信金・エネクス向けデータソース行は含みません）。"
+        " 必要に応じて下の表またはCSV上書きで調整してください。"
+    )
     full_pl = st.checkbox(
         "自社PLは「全項目」をドロップダウンに表示",
         value=True,
@@ -295,11 +297,14 @@ with tab2:
         " キーワード・PL・金額レンジは表で編集（上から優先・長いキーワード優先）。"
         " 支給控除の人件費合計は **タブ④** の項目名と対応させています。"
     )
+    st.session_state.halka_master_work = _normalize_halka_master_dataframe(
+        st.session_state.halka_master_work
+    )
     up_master = st.file_uploader("マスタをCSVで上書き読込（任意）", type=["csv"], key="up_master")
     if up_master is not None:
         try:
             raw = up_master.read()
-            st.session_state.halka_master_work = read_csv_auto(raw)
+            st.session_state.halka_master_work = _normalize_halka_master_dataframe(read_csv_auto(raw))
             st.success("マスタを読み込みました")
         except Exception as e:
             st.error(f"読み込み失敗: {e}")
@@ -363,123 +368,56 @@ with tab2:
     )
     st.session_state.halka_master_work = edited
 
-    sample_bytes = (_ROOT / "sample_master.csv").read_bytes()
-    st.download_button("サンプルマスタ（CSV）をダウンロード", data=sample_bytes, file_name="sample_master.csv")
+    master_dl = _HALKA_MASTER_CSV.read_bytes() if _HALKA_MASTER_CSV.is_file() else edited.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "halka 既定マスタ（CSV）をダウンロード",
+        data=master_dl,
+        file_name="halka_master.csv",
+    )
 
 with tab3:
     run = st.button("振り分けを実行", type="primary")
 
     if run:
         if tx_file is None:
-            st.error("取引ファイル（CSV または PDF）をアップロードしてください（タブ①）。")
+            st.error("取引ファイル（CSV）をアップロードしてください（タブ①）。")
             st.stop()
 
         raw = tx_file.getvalue()
-        name = getattr(tx_file, "name", "") or ""
 
-        if format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
-            if not name.lower().endswith(".pdf"):
-                st.error("このプリセットは **PDF** を選んでください（エネクスフリート請求書）。")
-                st.stop()
-            try:
-                work = parse_enex_fleet_pdf_bytes(raw, filename=name)
-            except Exception as e:
-                st.error(f"PDFの読み込みに失敗しました: {e}")
-                st.stop()
-            if work.empty:
+        try:
+            tx_df = read_csv_auto(raw)
+        except Exception as e:
+            st.error(f"ファイルの読み込みに失敗しました: {e}")
+            st.stop()
+
+        if format_preset == _PRESET_MF_CARD:
+            if "取引日時" in tx_df.columns and "金額" in tx_df.columns:
+                if "支払先" not in tx_df.columns and "支払先（漢字）" not in tx_df.columns:
+                    st.error(
+                        "マネフォ公式CSVでは **支払先** または **支払先（漢字）** 列が必要です。"
+                        f" 現在の列: {list(tx_df.columns)}"
+                    )
+                    st.stop()
+                work = _moneyforward_card_df_to_work(tx_df)
+            elif (
+                "ご利用日" in tx_df.columns
+                and "ご利用内容" in tx_df.columns
+                and "金額" in tx_df.columns
+            ):
+                work = tx_df.copy()
+                work = work.rename(columns={"ご利用日": "日付", "ご利用内容": "摘要"})
+                amt = work["金額"].map(parse_amount_cell)
+                work["出金額"] = amt.fillna(0).clip(lower=0)
+                work = work.drop(columns=["金額"], errors="ignore")
+            else:
                 st.error(
-                    "本部カード（0001〜0004）の **（車番　計）** が1件も取れませんでした。"
-                    " PDFのテキストが取れているか、別版PDFで試してください。"
+                    "マネフォカード用の列が見つかりません。\n\n"
+                    "- **公式:** **取引日時**・**金額**・（**支払先** または **支払先（漢字）**）\n"
+                    "- **互換（旧activity）:** **ご利用日**・**ご利用内容**・**金額**\n\n"
+                    f"現在の列: {list(tx_df.columns)}"
                 )
                 st.stop()
-            total_enex = float(pd.to_numeric(work["出金額"], errors="coerce").fillna(0).sum())
-            st.metric(
-                "エネフリ請求書・本部カード（車番計）の合計",
-                f"{total_enex:,.0f} 円",
-                help="PDFの「（車番　計）」行の金額のみを参照し、カード0001〜0004ごとに1行ずつ合計しています。",
-            )
-            st.caption(f"抽出: **{len(work)}** 行（カードあたり最大1件・車番計ベース）")
-            tx_df = None
-        elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
-            if not name.lower().endswith(".pdf"):
-                st.error("このプリセットは **PDF** を選んでください（横浜信金の通帳スキャン）。")
-                st.stop()
-            try:
-                scan_df, ocr_msgs = extract_yokohama_scan_pdf(raw, filename=name)
-            except Exception as e:
-                st.error(f"スキャンPDFの処理に失敗しました: {e}")
-                st.stop()
-            for m in ocr_msgs:
-                st.warning(m)
-            if scan_df.empty:
-                st.error("OCR結果が空です。EasyOCR の導入（`pip install easyocr`）を確認してください。")
-                st.stop()
-            st.subheader("横浜信金 OCR 結果（全行・ステータス付き）")
-            st.dataframe(scan_df, use_container_width=True, hide_index=True)
-            inc = (
-                frozenset({"確定", "要確認"})
-                if yokohama_ocr_include_review
-                else frozenset({"確定"})
-            )
-            work, excluded_rows, wmsgs = scan_df_to_bank_work(scan_df, include_statuses=inc)
-            for m in wmsgs:
-                st.warning(m)
-            if not excluded_rows.empty:
-                st.subheader("振り分け対象外（不明・要確認・または除外）")
-                st.caption("誤取り込みを防ぐため、ここに出た行は既定では振り分けに含めません。CSVで修正するか、要確認を含める設定を検討してください。")
-                st.dataframe(excluded_rows, use_container_width=True, hide_index=True)
-            if work.empty:
-                st.error(
-                    "振り分けに使える行がありません。「要確認を含める」をオンにするか、"
-                    " スキャン品質・OCRエンジンを見直し、またはCSVで手入力してください。"
-                )
-                st.stop()
-            dt = work["日付"].astype(str).str.strip()
-            work = work[dt.ne("") & dt.ne("nan") & work["日付"].notna()]
-            tx_df = None
-        else:
-            try:
-                if format_preset == "横浜信用金庫（入出金明細・CSV／Excel）" and name.lower().endswith(
-                    (".xlsx", ".xlsm")
-                ):
-                    tx_df = read_yokohama_bank_excel(raw)
-                else:
-                    tx_df = read_csv_auto(raw)
-            except Exception as e:
-                st.error(f"ファイルの読み込みに失敗しました: {e}")
-                st.stop()
-
-        if format_preset == "アメックス（activity CSV）":
-            need_cols = ("ご利用日", "ご利用内容", "金額")
-            for c in need_cols:
-                if c not in tx_df.columns:
-                    st.error(f"列「{c}」がありません。現在の列: {list(tx_df.columns)}")
-                    st.stop()
-            work = tx_df.copy()
-            work = work.rename(columns={"ご利用日": "日付", "ご利用内容": "摘要"})
-            amt = work["金額"].map(parse_amount_cell)
-            work["出金額"] = amt.fillna(0).clip(lower=0)
-            work = work.drop(columns=["金額"], errors="ignore")
-        elif format_preset == "横浜信用金庫（入出金明細・CSV／Excel）":
-            need_cols = ("日付", "入金", "出金")
-            for c in need_cols:
-                if c not in tx_df.columns:
-                    st.error(f"列「{c}」がありません。現在の列: {list(tx_df.columns)}")
-                    st.stop()
-            if "摘要" not in tx_df.columns:
-                st.error("列「摘要」がありません（科目・支払先のみの場合は手動プリセットで列名を調整してください）。")
-                st.stop()
-            work = tx_df.copy()
-            work["入金額"] = work["入金"].map(parse_amount_cell).fillna(0)
-            work["出金額"] = work["出金"].map(parse_amount_cell).fillna(0)
-            work = work.drop(columns=["入金", "出金"], errors="ignore")
-            work["摘要"] = _combine_yokohama_summary(work)
-            dt = work["日付"].astype(str).str.strip()
-            work = work[dt.ne("") & dt.ne("nan") & work["日付"].notna()]
-        elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
-            pass  # work は上で構築済み
-        elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
-            pass  # work は上で構築済み
         else:
             for need in (summary_col, out_col):
                 if need not in tx_df.columns:
@@ -500,30 +438,16 @@ with tab3:
         if exclude_orico:
             work = filter_exclude_orico(work, summary_col="摘要")
 
-        if exclude_amex_hq_noise:
-            work = filter_amex_hq_noise(work, summary_col="摘要", out_col="出金額")
-
         if exclude_aozora_hq_noise and format_preset == "あおぞらネット銀行（法人口座・標準CSV）":
             work = filter_aozora_hq_noise(work, summary_col="摘要")
+
+        work = _apply_halka_ap_plus_half(work)
 
         if add_src_auto and source_col not in work.columns:
             if format_preset == "あおぞらネット銀行（法人口座・標準CSV）":
                 work[source_col] = "あおぞら"
-            elif format_preset == "アメックス（activity CSV）":
-                work[source_col] = "アメックス"
-            elif format_preset in (
-                "横浜信用金庫（入出金明細・CSV／Excel）",
-                "横浜信用金庫（通帳スキャンPDF・OCR）",
-            ):
-                work[source_col] = "横浜信金"
-            elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
-                work[source_col] = "エネクスフリート"
-
-        if format_preset in (
-            "横浜信用金庫（入出金明細・CSV／Excel）",
-            "横浜信用金庫（通帳スキャンPDF・OCR）",
-        ):
-            work = apply_yokohama_hq_master_rules(work)
+            elif format_preset == _PRESET_MF_CARD:
+                work[source_col] = "マネフォカード"
 
         master_rows = load_master_dataframe(st.session_state.halka_master_work)
         if not master_rows:
@@ -532,10 +456,7 @@ with tab3:
 
         scol = source_col if use_source and source_col in work.columns else None
 
-        if format_preset in (
-            "横浜信用金庫（入出金明細・CSV／Excel）",
-            "横浜信用金庫（通帳スキャンPDF・OCR）",
-        ) and "取込対象外" in work.columns:
+        if "取込対象外" in work.columns:
             ex_mask = work["取込対象外"].fillna(False)
             work_in = work.loc[~ex_mask]
             work_ex = work.loc[ex_mask]
@@ -559,6 +480,16 @@ with tab3:
                     + " "
                     + adj[m]
                 ).str.strip()
+            if "按分メモ" in result_in.columns:
+                am = result_in["按分メモ"].fillna("").astype(str).str.strip()
+                m2 = am.ne("")
+                if m2.any():
+                    result_in.loc[m2, "メモ"] = (
+                        result_in.loc[m2, "メモ"].fillna("").astype(str).str.strip()
+                        + " "
+                        + am[m2]
+                    ).str.strip()
+                result_in = result_in.drop(columns=["按分メモ"], errors="ignore")
         else:
             result_in = pd.DataFrame()
 
@@ -585,18 +516,8 @@ with tab3:
         c4.metric("除外", int(vc.get("除外", 0)))
         c5.metric("件数合計", len(result))
 
-        _yokohama_presets = (
-            "横浜信用金庫（入出金明細・CSV／Excel）",
-            "横浜信用金庫（通帳スキャンPDF・OCR）",
-        )
-        _table_extra_omit = (
-            _YOKOHAMA_DISPLAY_EXTRA_OMIT if format_preset in _yokohama_presets else ()
-        )
-
         st.subheader("全明細（振分結果付き）")
-        display_all = _result_table_for_display(
-            result, extra_omit_cols=_table_extra_omit
-        )
+        display_all = _result_table_for_display(result)
         st.dataframe(
             display_all,
             column_config=_result_table_column_config(display_all),
@@ -626,9 +547,7 @@ with tab3:
                 review_base["判断理由"] = ""
             if "今後の仕分けメモ" not in review_base.columns:
                 review_base["今後の仕分けメモ"] = ""
-            review_base = _result_table_for_display(
-                review_base, extra_omit_cols=_table_extra_omit
-            )
+            review_base = _result_table_for_display(review_base)
             col_cfg = _result_table_column_config(review_base)
             for c in review_base.columns:
                 if c in ("判断理由", "今後の仕分けメモ"):
@@ -739,6 +658,7 @@ with tab4:
 st.divider()
 st.markdown("##### 次の拡張（要件定義書との対応）")
 st.markdown(
-    "- Googleスプレッドシート連携・画像OCR・学習用マスタ更新は未実装のMVPです（横浜信金は**CSV入出金明細**プリセットで対応）。\n"
-    "- マスタ初版は、提供待ちデータ（MF仕訳・PL実績）到着後に精緻化できます。"
+    "- Googleスプレッドシート連携・画像OCR・学習用マスタ更新は未実装のMVPです。\n"
+    "- **halka_AI** はあおぞら／**マネフォ・カード利用明細CSV（公式列）**／手動列名。横浜信金・エネフリの取込は行いません。\n"
+    "- マスタは **`halka_master.csv`**（送付いただいた科目・店舗ベースの初版）。**APｱﾌﾟﾗｽ** は摘要一致時に **出金50%按分** します。"
 )
