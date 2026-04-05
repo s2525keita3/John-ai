@@ -103,6 +103,42 @@ def _result_table_column_config(df: pd.DataFrame) -> dict:
     return cfg
 
 
+def _sanitize_dataframe_for_streamlit_data_editor(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    st.data_editor + TextColumn と pandas の dtype が一致しないと Streamlit が落ちるため、
+    文字列系・日付を str 化し、数値・真偽はそのままにする。
+    """
+    out = df.copy()
+    force_str = frozenset(
+        {
+            "日付",
+            "振分PL項目",
+            "判断理由",
+            "今後の仕分けメモ",
+            "摘要",
+            "メモ",
+            "ご利用内容",
+        }
+    )
+    for c in out.columns:
+        s = out[c]
+        if c in force_str:
+            if pd.api.types.is_datetime64_any_dtype(s):
+                out[c] = pd.to_datetime(s, errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+            else:
+                out[c] = s.map(lambda x: "" if pd.isna(x) else str(x))
+            continue
+        if pd.api.types.is_bool_dtype(s):
+            continue
+        if pd.api.types.is_numeric_dtype(s):
+            continue
+        if pd.api.types.is_datetime64_any_dtype(s):
+            out[c] = pd.to_datetime(s, errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+        else:
+            out[c] = s.map(lambda x: "" if pd.isna(x) else str(x))
+    return out
+
+
 # 本部人件費テーブル（画面）では内訳の社保4列を出さない（CSVには残す）
 _PAYROLL_DISPLAY_OMIT_COLS = (
     "健康保険料(会社)",
@@ -625,6 +661,7 @@ with tab2:
             review_base = _result_table_for_display(
                 review_base, extra_omit_cols=_table_extra_omit
             )
+            review_base = _sanitize_dataframe_for_streamlit_data_editor(review_base)
             col_cfg = _result_table_column_config(review_base)
             for c in review_base.columns:
                 if c in ("判断理由", "今後の仕分けメモ"):
