@@ -288,20 +288,23 @@ def _dataframe_pl_classified_rows(df: pd.DataFrame) -> pd.DataFrame:
     return sub.loc[mask].copy()
 
 
+# PL分類済みのみCSVに含める列（全明細表と同じキー名。順序固定）
+_PL_CLASSIFIED_CSV_COLUMNS = (
+    "日付",
+    "振分PL項目",
+    "摘要",
+    "出金額",
+)
+
+
 def _pl_classified_csv_bytes(df: pd.DataFrame) -> bytes:
-    """PL分類済みCSV用: 取込対象外・調整用の列は含めない。"""
-    out = df.copy()
-    drop_pl_csv = (
-        "取込対象外",
-        "取込対象外理由",
-        "本部調整メモ",
-        "出金額_通帳",
-        "計",
-        "科目",
-    )
-    drop_cols = [c for c in drop_pl_csv if c in out.columns]
-    if drop_cols:
-        out = out.drop(columns=drop_cols)
+    """PL分類済みCSV用: 日付・振分PL項目・摘要・出金額のみ（マネフォ等の余列は出さない）。"""
+    cols = [c for c in _PL_CLASSIFIED_CSV_COLUMNS if c in df.columns]
+    if not cols:
+        return pd.DataFrame(columns=list(_PL_CLASSIFIED_CSV_COLUMNS)).to_csv(index=False).encode(
+            "utf-8-sig"
+        )
+    out = df[cols].copy()
     return out.to_csv(index=False).encode("utf-8-sig")
 
 
@@ -873,7 +876,7 @@ with tab1:
                 "PL分類済みのみCSV",
                 data=_pl_classified_csv_bytes(pl_only_df),
                 file_name=f"本部経費_PL分類済みのみ_{stamp}.csv",
-                help="振分PLが付き、取込対象外・マスタ除外でない行。取込対象外の列は含みません。",
+                help="振分PLが付き、取込対象外・除外でない行。**日付・振分PL項目・摘要・出金額**のみ出力。",
             )
         else:
             dl2.caption("PL分類済みの行がありません。")
