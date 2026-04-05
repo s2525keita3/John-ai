@@ -578,8 +578,9 @@ with tab3:
         st.divider()
         st.subheader("要確認・判断不能（レビュー・自由記載）")
         st.caption(
-            "下の表で **判断理由** と **今後の仕分けメモ** を追記し、"
-            "「レビュー行CSV」をダウンロードして Cursor に渡し、マスタ更新やルール追加に使えます。"
+            "**判断不能**の行については、**社長へデータを渡し、マスタへの追加を依頼する旨を報告**してください。"
+            " 下の表で **判断理由** と **今後の仕分けメモ** を追記し、"
+            " 一番右の **「社長へ渡す…」** からCSVを出力して共有・Cursor でマスタ更新に使えます。"
         )
         review_base = result[result["分類結果"].isin(["要確認", "判断不能"])].copy()
         if review_base.empty:
@@ -632,13 +633,13 @@ with tab3:
         if edited_review is not None and not edited_review.empty:
             rev_bytes = edited_review.to_csv(index=False).encode("utf-8-sig")
             dl3.download_button(
-                "レビュー行のみCSV（Cursor用）",
+                "社長へ渡す判断不能・要確認ファイル（CSV）",
                 data=rev_bytes,
-                file_name=f"本部経費_要確認判断不能_レビュー_{stamp}.csv",
-                help="要確認・判断不能の行＋判断理由・今後の仕分けメモ",
+                file_name=f"本部経費_社長向け_要確認判断不能_{stamp}.csv",
+                help="要確認・判断不能の行のみ。判断理由・今後の仕分けメモ付き。社長共有・マスタ追記用。",
             )
         else:
-            dl3.caption("レビュー対象行があるときにダウンロードできます。")
+            dl3.caption("要確認・判断不能の行があるときに、社長向けCSVをダウンロードできます。")
 
     else:
         st.info("タブ①で取引データをアップロードし、タブ②でマスタを確認してから「振り分けを実行」を押してください。")
