@@ -156,6 +156,11 @@ _KOUSAI_VIEW_EXTRA_OMIT_COLS = (
     "分類結果",
 )
 
+# メイン「全明細」表：上記と同じ冗長列を省くが、振分の確認のため分類結果は残す（spec_rules_snapshot の kousai 省略列に準拠）
+_MF_CARD_MAIN_TABLE_EXTRA_OMIT_COLS: tuple[str, ...] = tuple(
+    c for c in _KOUSAI_VIEW_EXTRA_OMIT_COLS if c != "分類結果"
+)
+
 
 def _result_table_for_display(
     df: pd.DataFrame,
@@ -627,8 +632,17 @@ with tab1:
             "本部経費の一覧チェック対象外にできる明細です（**CSV には全件・列「本部経費一覧表示」付き**）。"
         )
 
-        st.subheader("全明細（振分結果付き・一覧表示対象）")
-        display_all = _result_table_for_display(result_vis)
+        if format_preset == _PRESET_MF_CARD:
+            st.subheader("マネフォカードの全明細（振分結果付き・一覧表示対象）")
+            st.caption(
+                "マネフォ公式CSVの冗長列（カード利用明細ID・取引日時・確定日時・支払先カナ等）は一覧では出しません。"
+                " **全列つきのデータ** は下の「全明細をCSVダウンロード」に含まれます。"
+            )
+            _mf_omit = _MF_CARD_MAIN_TABLE_EXTRA_OMIT_COLS
+        else:
+            st.subheader("全明細（振分結果付き・一覧表示対象）")
+            _mf_omit = ()
+        display_all = _result_table_for_display(result_vis, extra_omit_cols=_mf_omit)
         st.dataframe(
             display_all,
             column_config=_result_table_column_config(display_all),
@@ -645,7 +659,7 @@ with tab1:
         if result_hidden.empty:
             st.info("除外対象の明細はありません。")
         else:
-            dh = _result_table_for_display(result_hidden)
+            dh = _result_table_for_display(result_hidden, extra_omit_cols=_mf_omit)
             st.dataframe(
                 dh,
                 column_config=_result_table_column_config(dh),
@@ -731,7 +745,7 @@ with tab1:
                 review_base["判断理由"] = ""
             if "今後の仕分けメモ" not in review_base.columns:
                 review_base["今後の仕分けメモ"] = ""
-            review_base = _result_table_for_display(review_base)
+            review_base = _result_table_for_display(review_base, extra_omit_cols=_mf_omit)
             review_base = _sanitize_dataframe_for_streamlit_data_editor(review_base)
             col_cfg = _result_table_column_config(review_base)
             for c in review_base.columns:

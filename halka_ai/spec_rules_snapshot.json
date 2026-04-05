@@ -1,0 +1,128 @@
+{
+  "meta": {
+    "app_name": "halka_AI",
+    "package_path": "halka_ai/",
+    "entry_local": "streamlit run halka_ai/app.py",
+    "entry_cloud_main_file": "halka_ai_app.py",
+    "deploy_url_example": "https://john-ai-halka-keihi-ver1.streamlit.app/",
+    "git_branch_documented": "main",
+    "snapshot_note": "コード（app.py / classifier.py / amazon_aozora_reconcile.py / askul_aozora_reconcile.py / reconcile_expander_ui.py / result_display_hide.py）に基づくルール・仕様のスナップショット。更新時は本ファイルを再生成または追記すること。"
+  },
+  "scope_not_included": [
+    "横浜信用金庫・エネクスフリートの取込は行わない",
+    "本部経費処理アプリ（JOHN）とはコード非共有の独立パッケージ"
+  ],
+  "external_links": {
+    "halka_spreadsheet": "https://docs.google.com/spreadsheets/d/1sfPRvU5ueLXdne-S3abXs2Iszndr-y5y96eA2w6l4O8/edit?gid=880856182#gid=880856182",
+    "gmo_aozora_bank": "https://bank.gmo-aozora.com/",
+    "moneyforward_biz_pay": "https://biz-pay.moneyforward.com/home",
+    "amazon_jp": "https://www.amazon.co.jp/?ref_=abn_logo",
+    "askul_home": "https://www.askul.co.jp/"
+  },
+  "sidebar_ui": {
+    "format_presets": [
+      "あおぞらネット銀行（法人口座・標準CSV）",
+      "マネフォカード（利用明細CSV）"
+    ],
+    "aozora_fixed_columns": {
+      "日付": "日付",
+      "摘要": "摘要",
+      "入金金額": "入金金額",
+      "出金金額": "出金金額"
+    },
+    "master_section": "expander「② マスタ（ドロップダウン）」default expanded=false",
+    "hidden_settings": "データソース区分の手動ON・除外ルールUIは非表示。既定: add_src_auto=true, exclude_orico=true, exclude_aozora_hq_noise=true（あおぞら時）"
+  },
+  "master_file": {
+    "path": "halka_ai/halka_master.csv",
+    "columns_expected": ["摘要キーワード", "自社PL勘定項目", "金額下限", "金額上限", "データソース区分"],
+    "optional_hide_keywords_file": "halka_ai/halka_display_hide_keywords.csv"
+  },
+  "moneyforward_card_csv": {
+    "official_required": ["取引日時", "金額", "支払先 または 支払先（漢字）"],
+    "legacy_activity_alt": ["ご利用日", "ご利用内容", "金額"],
+    "mapping_to_internal": {
+      "摘要": "支払先 + 空白 + 支払先（漢字）を結合",
+      "日付": "取引日時から YYYYMMDD",
+      "出金額": "金額の絶対値"
+    }
+  },
+  "aozora_csv": {
+    "standard_columns": "日付・摘要・入金金額・出金金額・残高・メモ",
+    "filter_aozora_hq_noise": "あおぞらプリセット時のみ、本部ノイズ摘要をフィルタ（aozora_filters.filter_aozora_hq_noise）"
+  },
+  "filters_before_classify": [
+    "filter_exclude_orico（オリコ等）",
+    "filter_aozora_hq_noise（あおぞら時のみ）"
+  ],
+  "ap_plus_half_rule": {
+    "summary_markers": ["APｱﾌﾟﾗｽ", "APアプラス"],
+    "effect": "該当行の出金額を50%に丸め、按分メモを付与"
+  },
+  "classification": {
+    "result_labels": ["確定", "要確認", "判断不能", "除外"],
+    "source": "classifier.classify_dataframe + halka_master 行マッチ"
+  },
+  "main_display_hide": {
+    "purpose": "摘要に一致する行を「本部経費一覧表示」で非表示にし、メイン表・集計・要確認表から除外。全件CSVには列「本部経費一覧表示」付きで残す",
+    "optional_file_keywords": "halka_display_hide_keywords.csv の列「摘要キーワード」（#行コメント可）",
+    "hardcoded_rules_summary": [
+      "df./DF.+マネフォ系マネフォカード一括引落",
+      "ペイペイ+ハルカ（居宅資金）",
+      "ユ）タケシン / ユ)タケシン",
+      "振込で始まり、金融機関別に給与・個人振込を非表示（三菱UFJ/みずほ/三井住友/楽天/埼玉りそな/横浜/りそな等の条件は result_display_hide.py 参照）"
+    ]
+  },
+  "result_table_display_omit_columns": [
+    "残高", "データソース区分", "海外通貨利用金額", "換算レート", "メモ", "本部経費一覧表示"
+  ],
+  "moneyforward_main_table_display": {
+    "when": "サイドバーのフォーマットが「マネフォカード（利用明細CSV）」のとき",
+    "extra_omit_columns": "kousai_section.extra_omit_columns_for_table_and_csv と同一だが「分類結果」は一覧表に残す（_MF_CARD_MAIN_TABLE_EXTRA_OMIT_COLS / app.py）",
+    "screens": [
+      "マネフォカードの全明細（振分結果付き・一覧表示対象）",
+      "除外一覧（確認用）",
+      "要確認・判断不能（レビュー・自由記載）"
+    ],
+    "csv_full_columns": "「全明細をCSVダウンロード」等は従来どおり全列・本部経費一覧表示列付き"
+  },
+  "kousai_section": {
+    "filter_pl": "接待交際費",
+    "extra_omit_columns_for_table_and_csv": [
+      "カード利用明細ID", "取引日時", "確定日時", "支払先（カナ）", "支払先（漢字）",
+      "登録番号", "取引状況", "金額", "速報金額", "現地通貨金額", "現地通貨コード", "為替レート",
+      "海外サービス手数料", "ポイント還元率", "ポイント還元額", "カードID", "カード番号4桁",
+      "証憑添付", "作成日時", "更新日時", "分類結果"
+    ],
+    "user_column": "相手・確認",
+    "download_csv_columns": "表の表示列と同じ（上記省略後の列 + 相手・確認）"
+  },
+  "pl_classified_only_csv": {
+    "row_filter": "振分PL項目が空・未選択・除外でなく、分類結果が除外でなく、取込対象外でない行",
+    "output_columns_fixed_order": ["日付", "振分PL項目", "摘要", "出金額"]
+  },
+  "amazon_aozora_reconcile": {
+    "bank_rows": "出金額>0 の行。列名は出金金額・出金額等の別名を正規化",
+    "amazon_aggregate": "注文番号 + 支払い確定日 + 支払認証ID/請求書番号で分割。照合金額は支払い金額",
+    "match_rule": {
+      "amount_tolerance_yen": 0.5,
+      "date_tolerance_days": 2,
+      "algorithm": "口座各行を、未使用のAmazon支払行のうち金額一致かつ日付差最小で1対1割当"
+    },
+    "result_csv_columns": ["口座取引日", "Amazon支払確定日", "Amazon支払金額", "注文商品概要"]
+  },
+  "payroll_tab2": {
+    "hq_keywords_default": ["本部", "桜木町", "新子安", "白根", "さいわい"],
+    "display_omit_social_columns": [
+      "健康保険料(会社)", "介護保険料(会社)", "厚生年金保険料(会社)", "子ども・子育て拠出金(会社)"
+    ]
+  },
+  "downloads_summary": {
+    "全明細CSV": "分類結果の全列（本部経費一覧表示列含む）",
+    "PL分類済みのみCSV": "日付・振分PL項目・摘要・出金額のみ",
+    "交際費一覧・表示列のみCSV": "交際費表の表示列",
+    "社長向け要確認判断不能CSV": "要確認・判断不能行 + 判断理由・今後の仕分けメモ",
+    "Amazon口座照合CSV": "照合一致表・未照合は別表示",
+    "アスクル口座照合CSV": "照合一致表・未照合は別表示（アスクル購入履歴×あおぞら）"
+  }
+}
