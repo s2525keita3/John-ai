@@ -22,6 +22,7 @@ from aozora_filters import filter_aozora_hq_noise
 from enex_fleet_master import (
     apply_enex_default_card_mapping,
     merge_enex_extract_with_master,
+    staff_name_to_initials_display,
     summarize_enex_by_base,
     summarize_enex_by_staff,
 )
@@ -72,8 +73,10 @@ _RESULT_TABLE_OMIT_COLS = (
     "メモ",
 )
 
-# エネフリ：カードマスタ紐づけ列は振分PLの次に並べて明細で見やすくする
+# エネフリ（通常表示）：カードマスタ紐づけ列は振分PLの次に並べる
 _ENEX_DISPLAY_COLS_ORDER = ("カード番号", "拠点", "車両番号", "スタッフ名")
+# エネフリ（コンパクト表示）：車両番号は出さない
+_ENEX_COMPACT_ORDER = ("拠点", "カード番号", "スタッフ名")
 
 # 横浜信金（CSV／Excel／スキャン）の全明細表示では隠す（ダウンロード「全明細」には残す）
 _YOKOHAMA_DISPLAY_EXTRA_OMIT = (
@@ -90,15 +93,24 @@ def _result_table_for_display(
     df: pd.DataFrame,
     *,
     extra_omit_cols: tuple[str, ...] = (),
+    enex_compact: bool = False,
 ) -> pd.DataFrame:
     """画面上の表用: 上記列を隠し、振分PL項目を日付の次に並べる（CSV用の元データは変えない）。"""
     out = df.copy()
+    if enex_compact and "スタッフ名" in out.columns:
+        out["スタッフ名"] = out["スタッフ名"].map(staff_name_to_initials_display)
     omit = _RESULT_TABLE_OMIT_COLS + extra_omit_cols
+    if enex_compact:
+        omit = omit + ("振分PL項目", "摘要", "入金額", "車両番号")
     drop_cols = [c for c in omit if c in out.columns]
     if drop_cols:
         out = out.drop(columns=drop_cols)
     cols = list(out.columns)
-    if "振分PL項目" in cols:
+    if enex_compact and "日付" in cols:
+        enex_first = [c for c in _ENEX_COMPACT_ORDER if c in cols]
+        rest = [c for c in cols if c not in ("日付", *enex_first)]
+        out = out[["日付"] + enex_first + rest]
+    elif "振分PL項目" in cols:
         enex_first = [c for c in _ENEX_DISPLAY_COLS_ORDER if c in cols]
         if "日付" in cols:
             rest = [c for c in cols if c not in ("日付", "振分PL項目", *enex_first)]
@@ -109,12 +121,14 @@ def _result_table_for_display(
     return out
 
 
-def _result_table_column_config(df: pd.DataFrame) -> dict:
+def _result_table_column_config(
+    df: pd.DataFrame, *, enex_compact: bool = False
+) -> dict:
     """日付を狭く、振分PLは左寄せで見やすく。"""
     cfg: dict = {}
     if "日付" in df.columns:
         cfg["日付"] = st.column_config.TextColumn("日付", width="small")
-    if "振分PL項目" in df.columns:
+    if not enex_compact and "振分PL項目" in df.columns:
         cfg["振分PL項目"] = st.column_config.TextColumn("振分PL項目", width="medium")
     if "カード番号" in df.columns:
         cfg["カード番号"] = st.column_config.TextColumn("カード番号", width="small")
@@ -123,7 +137,9 @@ def _result_table_column_config(df: pd.DataFrame) -> dict:
     if "車両番号" in df.columns:
         cfg["車両番号"] = st.column_config.TextColumn("車両番号", width="medium")
     if "スタッフ名" in df.columns:
-        cfg["スタッフ名"] = st.column_config.TextColumn("スタッフ名", width="medium")
+        label = "スタッフ（イニシャル）" if enex_compact else "スタッフ名"
+        w = "small" if enex_compact else "medium"
+        cfg["スタッフ名"] = st.column_config.TextColumn(label, width=w)
     return cfg
 
 
@@ -327,12 +343,21 @@ with st.sidebar:
                     enex_master_df = read_csv_auto(raw_m)
             except Exception as e:
                 st.error(f"カードマスタの読み込みに失敗しました: {e}")
-        st.download_button(
-            "サンプル・カードマスタCSV",
-            data=(_ROOT / "sample_enex_fleet_card_master.csv").read_bytes(),
-            file_name="sample_enex_fleet_card_master.csv",
-            key="dl_sample_enex_master",
-        )
+        _dl_enex_master = _ROOT / "default_enex_fleet_card_master.csv"
+        if _dl_enex_master.exists():
+            st.download_button(
+                "カードマスタCSV（同梱・全拠点）",
+                data=_dl_enex_master.read_bytes(),
+                file_name="default_enex_fleet_card_master.csv",
+                key="dl_sample_enex_master",
+            )
+        else:
+            st.download_button(
+                "サンプル・カードマスタCSV",
+                data=(_ROOT / "sample_enex_fleet_card_master.csv").read_bytes(),
+                file_name="sample_enex_fleet_card_master.csv",
+                key="dl_sample_enex_master",
+            )
         date_col = ""
         summary_col = ""
         in_col = ""
@@ -481,6 +506,17 @@ with tab1:
             try:
                 work = parse_enex_fleet_pdf_bytes(raw, filename=name)
                 work = apply_enex_default_card_mapping(work)
+                _def_enex_master = _ROOT / "default_enex_fleet_card_master.csv"
+                if _def_enex_master.exists():
+                    try:
+                        work = merge_enex_extract_with_master(
+                            work, read_csv_auto(_def_enex_master.read_bytes())
+                        )
+                    except Exception as e:
+                        st.warning(
+                            "同梱のカードマスタ（default_enex_fleet_card_master.csv）の読み込みに失敗しました: "
+                            f"{e}"
+                        )
                 if enex_master_df is not None and not enex_master_df.empty:
                     work = merge_enex_extract_with_master(work, enex_master_df)
             except Exception as e:
@@ -717,21 +753,22 @@ with tab1:
         )
 
         st.subheader("全明細（振分結果付き）")
-        if (
+        _enex_ui = (
             format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）"
-            and "カード番号" in result.columns
-        ):
+        )
+        if _enex_ui and "カード番号" in result.columns:
             st.caption(
-                "エネフリ明細：**カード番号**は請求書から。**拠点**は番号ルールで自動付与。"
-                " **車両番号・スタッフ名**はカードマスタCSVで上書きできます（未設定は空欄）。"
+                "エネフリ明細：**カード番号**は請求書から。**拠点・スタッフ（フルネーム）**は"
+                " 同梱マスタまたは任意アップロードのCSVで紐づけ。"
+                " この表では **振分PL・摘要・入金・車両番号は非表示**、スタッフは **イニシャル**。"
                 " 番号がルール外のときは拠点が「（拠点要確認）」になります。"
             )
         display_all = _result_table_for_display(
-            result, extra_omit_cols=_table_extra_omit
+            result, extra_omit_cols=_table_extra_omit, enex_compact=_enex_ui
         )
         st.dataframe(
             display_all,
-            column_config=_result_table_column_config(display_all),
+            column_config=_result_table_column_config(display_all, enex_compact=_enex_ui),
             width="stretch",
             hide_index=True,
         )
@@ -767,10 +804,10 @@ with tab1:
             if "今後の仕分けメモ" not in review_base.columns:
                 review_base["今後の仕分けメモ"] = ""
             review_base = _result_table_for_display(
-                review_base, extra_omit_cols=_table_extra_omit
+                review_base, extra_omit_cols=_table_extra_omit, enex_compact=_enex_ui
             )
             review_base = _sanitize_dataframe_for_streamlit_data_editor(review_base)
-            col_cfg = _result_table_column_config(review_base)
+            col_cfg = _result_table_column_config(review_base, enex_compact=_enex_ui)
             for c in review_base.columns:
                 if c in ("判断理由", "今後の仕分けメモ"):
                     col_cfg[c] = st.column_config.TextColumn(
