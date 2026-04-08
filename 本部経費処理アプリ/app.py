@@ -65,10 +65,11 @@ HONBU_MAIN_UPLOAD_DROPZONE_CSS = """
 <style>
 [data-testid="stMain"] [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"],
 [data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stFileUploaderDropzone"] {
-    min-height: 200px !important;
-    padding: 1.35rem 1.25rem !important;
+    min-height: 240px !important;
+    padding: 1.5rem 1.35rem !important;
     align-items: center !important;
     justify-content: center !important;
+    gap: 1rem !important;
     border: 2px dashed rgba(71, 85, 119, 0.45) !important;
     border-radius: 14px !important;
     background: linear-gradient(165deg, #f8fafc 0%, #eef2f7 100%) !important;
@@ -85,7 +86,31 @@ HONBU_MAIN_UPLOAD_DROPZONE_CSS = """
     width: 100% !important;
 }
 [data-testid="stMain"] [data-testid="stFileUploader"] section {
-    gap: 0.5rem !important;
+    gap: 0.75rem !important;
+}
+/* アップロード済みファイル名・Upload・削除(✕)を大きく（タッチしやすく） */
+[data-testid="stMain"] [data-testid="stFileUploader"] button {
+    font-size: 1.05rem !important;
+    padding: 0.5rem 0.9rem !important;
+    min-height: 2.85rem !important;
+    border-radius: 10px !important;
+}
+[data-testid="stMain"] [data-testid="stFileUploader"] button svg,
+[data-testid="stMain"] [data-testid="stFileUploader"] [role="button"] svg {
+    width: 1.35rem !important;
+    height: 1.35rem !important;
+}
+[data-testid="stMain"] [data-testid="stFileUploader"] [role="button"] {
+    min-height: 2.85rem !important;
+    min-width: 2.85rem !important;
+    padding: 0.45rem !important;
+}
+[data-testid="stMain"] [data-testid="stFileUploader"] p {
+    font-size: 1.08rem !important;
+    line-height: 1.45 !important;
+}
+[data-testid="stMain"] [data-testid="stFileUploader"] small {
+    font-size: 0.98rem !important;
 }
 </style>
 """
