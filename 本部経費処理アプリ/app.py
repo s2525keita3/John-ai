@@ -39,7 +39,6 @@ from payroll_hq import (
 )
 from yokohama_excel import read_yokohama_bank_excel
 from yokohama_hq_rules import apply_yokohama_hq_master_rules
-from yokohama_scan_pdf import extract_yokohama_scan_pdf, scan_df_to_bank_work
 from reconcile_expander_ui import (
     AMAZON_JP_HOME_URL,
     ASKUL_HOME_URL,
@@ -83,7 +82,7 @@ _ENEX_DISPLAY_COLS_ORDER = ("カード番号", "拠点", "車両番号", "スタ
 # エネフリ（コンパクト表示）：車両番号は出さない
 _ENEX_COMPACT_ORDER = ("拠点", "カード番号", "スタッフ名")
 
-# 横浜信金（CSV／Excel／スキャン）の全明細表示では隠す（ダウンロード「全明細」には残す）
+# 横浜信金（CSV／Excel）の全明細表示では隠す（ダウンロード「全明細」には残す）
 _YOKOHAMA_DISPLAY_EXTRA_OMIT = (
     "計",
     "取込対象外",
@@ -286,16 +285,13 @@ if "master_work" not in st.session_state:
 enex_master_df: pd.DataFrame | None = None
 with st.sidebar:
     st.subheader("取引CSVの列名")
-    yokohama_ocr_include_review = False
     format_preset = st.selectbox(
         "フォーマット",
         [
             "あおぞらネット銀行（法人口座・標準CSV）",
             "アメックス（activity CSV）",
             "横浜信用金庫（入出金明細・CSV／Excel）",
-            "横浜信用金庫（通帳スキャンPDF・OCR）",
             "エネクスフリート（請求書PDF・本部カード0001〜0004）",
-            "手動で列名を指定",
         ],
         key="format_preset",
     )
@@ -314,16 +310,6 @@ with st.sidebar:
         summary_col = "摘要"
         in_col = "入金"
         out_col = "出金"
-    elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
-        yokohama_ocr_include_review = st.checkbox(
-            "OCRで「要確認」と判定された行も振り分けに含める",
-            value=False,
-            key="yokohama_ocr_include_review",
-        )
-        date_col = ""
-        summary_col = ""
-        in_col = ""
-        out_col = ""
     elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
         enex_master_up = st.file_uploader(
             "エネフリ・カードマスタCSV（任意）",
@@ -361,11 +347,6 @@ with st.sidebar:
         summary_col = ""
         in_col = ""
         out_col = ""
-    else:
-        date_col = st.text_input("日付の列名", value="日付")
-        summary_col = st.text_input("摘要の列名", value="摘要")
-        in_col = st.text_input("入金額の列名", value="入金額")
-        out_col = st.text_input("出金額の列名", value="出金額")
 
     # 詳細設定（データソース・除外ルール）は非表示。既定は従来の expander 既定値と同じ。
     source_col = "データソース区分"
@@ -518,43 +499,6 @@ with tab1:
                     st.subheader("エネフリ：拠点別（車番計）")
                     st.dataframe(sb, width="stretch", hide_index=True)
             tx_df = None
-        elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
-            if not name.lower().endswith(".pdf"):
-                st.error("このプリセットは **PDF** を選んでください（横浜信金の通帳スキャン）。")
-                st.stop()
-            try:
-                scan_df, ocr_msgs = extract_yokohama_scan_pdf(raw, filename=name)
-            except Exception as e:
-                st.error(f"スキャンPDFの処理に失敗しました: {e}")
-                st.stop()
-            for m in ocr_msgs:
-                st.warning(m)
-            if scan_df.empty:
-                st.error("OCR結果が空です。EasyOCR の導入（`pip install easyocr`）を確認してください。")
-                st.stop()
-            st.subheader("横浜信金 OCR 結果（全行・ステータス付き）")
-            st.dataframe(scan_df, use_container_width=True, hide_index=True)
-            inc = (
-                frozenset({"確定", "要確認"})
-                if yokohama_ocr_include_review
-                else frozenset({"確定"})
-            )
-            work, excluded_rows, wmsgs = scan_df_to_bank_work(scan_df, include_statuses=inc)
-            for m in wmsgs:
-                st.warning(m)
-            if not excluded_rows.empty:
-                st.subheader("振り分け対象外（不明・要確認・または除外）")
-                st.caption("誤取り込みを防ぐため、ここに出た行は既定では振り分けに含めません。CSVで修正するか、要確認を含める設定を検討してください。")
-                st.dataframe(excluded_rows, use_container_width=True, hide_index=True)
-            if work.empty:
-                st.error(
-                    "振り分けに使える行がありません。「要確認を含める」をオンにするか、"
-                    " スキャン品質・OCRエンジンを見直し、またはCSVで手入力してください。"
-                )
-                st.stop()
-            dt = work["日付"].astype(str).str.strip()
-            work = work[dt.ne("") & dt.ne("nan") & work["日付"].notna()]
-            tx_df = None
         else:
             try:
                 if format_preset == "横浜信用金庫（入出金明細・CSV／Excel）" and name.lower().endswith(
@@ -592,7 +536,7 @@ with tab1:
                     st.error(f"列「{c}」がありません。現在の列: {list(tx_df.columns)}")
                     st.stop()
             if "摘要" not in tx_df.columns:
-                st.error("列「摘要」がありません（科目・支払先のみの場合は手動プリセットで列名を調整してください）。")
+                st.error("列「摘要」がありません。明細の列構成（科目・支払先・摘要）を確認してください。")
                 st.stop()
             work = tx_df.copy()
             work["入金額"] = work["入金"].map(parse_amount_cell).fillna(0)
@@ -602,8 +546,6 @@ with tab1:
             dt = work["日付"].astype(str).str.strip()
             work = work[dt.ne("") & dt.ne("nan") & work["日付"].notna()]
         elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
-            pass  # work は上で構築済み
-        elif format_preset == "横浜信用金庫（通帳スキャンPDF・OCR）":
             pass  # work は上で構築済み
         else:
             for need in (summary_col, out_col):
@@ -636,18 +578,12 @@ with tab1:
                 work[source_col] = "あおぞら"
             elif format_preset == "アメックス（activity CSV）":
                 work[source_col] = "アメックス"
-            elif format_preset in (
-                "横浜信用金庫（入出金明細・CSV／Excel）",
-                "横浜信用金庫（通帳スキャンPDF・OCR）",
-            ):
+            elif format_preset == "横浜信用金庫（入出金明細・CSV／Excel）":
                 work[source_col] = "横浜信金"
             elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
                 work[source_col] = "エネクスフリート"
 
-        if format_preset in (
-            "横浜信用金庫（入出金明細・CSV／Excel）",
-            "横浜信用金庫（通帳スキャンPDF・OCR）",
-        ):
+        if format_preset == "横浜信用金庫（入出金明細・CSV／Excel）":
             work = apply_yokohama_hq_master_rules(work)
 
         master_rows = load_master_dataframe(st.session_state.master_work)
@@ -657,10 +593,7 @@ with tab1:
 
         scol = source_col if use_source and source_col in work.columns else None
 
-        if format_preset in (
-            "横浜信用金庫（入出金明細・CSV／Excel）",
-            "横浜信用金庫（通帳スキャンPDF・OCR）",
-        ) and "取込対象外" in work.columns:
+        if format_preset == "横浜信用金庫（入出金明細・CSV／Excel）" and "取込対象外" in work.columns:
             ex_mask = work["取込対象外"].fillna(False)
             work_in = work.loc[~ex_mask]
             work_ex = work.loc[ex_mask]
@@ -713,10 +646,7 @@ with tab1:
         c4.metric("除外", int(vc.get("除外", 0)))
         c5.metric("件数合計", len(result))
 
-        _yokohama_presets = (
-            "横浜信用金庫（入出金明細・CSV／Excel）",
-            "横浜信用金庫（通帳スキャンPDF・OCR）",
-        )
+        _yokohama_presets = ("横浜信用金庫（入出金明細・CSV／Excel）",)
         _table_extra_omit = (
             _YOKOHAMA_DISPLAY_EXTRA_OMIT if format_preset in _yokohama_presets else ()
         )
