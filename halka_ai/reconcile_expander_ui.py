@@ -80,7 +80,7 @@ def render_amazon_askul_aozora_reconcile_expander(*, key_prefix: str = "") -> No
                 ASKUL_HOME_URL,
                 use_container_width=True,
             )
-        st.markdown(AMAZON_RECONCILE_DROPZONE_CSS, unsafe_allow_html=True)
+        st.html(AMAZON_RECONCILE_DROPZONE_CSS)
         with st.container(border=True):
             _zu_a, _zu_k, _zu_r = st.columns(3, gap="large")
             with _zu_a:
