@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import io
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -41,6 +40,11 @@ from payroll_hq import (
 from yokohama_excel import read_yokohama_bank_excel
 from yokohama_hq_rules import apply_yokohama_hq_master_rules
 from yokohama_scan_pdf import extract_yokohama_scan_pdf, scan_df_to_bank_work
+from reconcile_expander_ui import (
+    AMAZON_JP_HOME_URL,
+    ASKUL_HOME_URL,
+    render_amazon_askul_aozora_reconcile_expander,
+)
 
 _ROOT = Path(__file__).resolve().parent
 
@@ -255,12 +259,26 @@ st.caption(
 with st.container(border=True):
     st.markdown("##### 本部経費のスプレッドシート（入力・計上先）")
     st.caption("振分結果を反映したり、本部経費をまとめるときは、まずここを開いてください。")
-    st.link_button(
-        "Google スプレッドシートを開く",
-        HONBU_KEIHI_SPREADSHEET_URL,
-        use_container_width=True,
-        type="primary",
-    )
+    _lk1, _lk2, _lk3 = st.columns(3)
+    with _lk1:
+        st.link_button(
+            "Google スプレッドシートを開く",
+            HONBU_KEIHI_SPREADSHEET_URL,
+            use_container_width=True,
+            type="primary",
+        )
+    with _lk2:
+        st.link_button(
+            "Amazon.co.jp を開く（注文履歴の取得など）",
+            AMAZON_JP_HOME_URL,
+            use_container_width=True,
+        )
+    with _lk3:
+        st.link_button(
+            "アスクル（公式）を開く（購入履歴 CSV）",
+            ASKUL_HOME_URL,
+            use_container_width=True,
+        )
 
 if "master_work" not in st.session_state:
     st.session_state.master_work = pd.read_csv(_ROOT / "sample_master.csv", encoding="utf-8-sig")
@@ -445,18 +463,7 @@ with tab1:
         type=["csv", "pdf", "xlsx", "xlsm"],
         key="tx",
     )
-    # halka_ai と同じ Amazon／アスクル×あおぞら照合（リポジトリに halka_ai があるときのみ表示）
-    _halka_dir = _ROOT.parent / "halka_ai"
-    if _halka_dir.is_dir():
-        _halp = str(_halka_dir.resolve())
-        if _halp not in sys.path:
-            sys.path.insert(0, _halp)
-        try:
-            from reconcile_expander_ui import render_amazon_askul_aozora_reconcile_expander
-
-            render_amazon_askul_aozora_reconcile_expander(key_prefix="honbu_keihi_")
-        except ImportError:
-            pass
+    render_amazon_askul_aozora_reconcile_expander(key_prefix="honbu_keihi_")
     st.divider()
     run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")
 
