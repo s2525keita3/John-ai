@@ -30,7 +30,7 @@
       "入金金額": "入金金額",
       "出金金額": "出金金額"
     },
-    "master_section": "expander「② マスタ（ドロップダウン）」default expanded=false",
+    "master_section": "expander「② マスタ（折りたたみ・通常は不要）」default expanded=false",
     "hidden_settings": "データソース区分の手動ON・除外ルールUIは非表示。既定: add_src_auto=true, exclude_orico=true, exclude_aozora_hq_noise=true（あおぞら時）"
   },
   "master_file": {

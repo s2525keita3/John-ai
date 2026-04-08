@@ -378,7 +378,7 @@ with st.sidebar:
     exclude_aozora_hq_noise = True
 
     st.divider()
-    with st.expander("② マスタ（ドロップダウン）", expanded=False):
+    with st.expander("② マスタ（折りたたみ・通常は不要）", expanded=False):
         full_pl = st.checkbox(
             "自社PLは「全項目」をドロップダウンに表示",
             value=True,
@@ -800,8 +800,8 @@ with tab1:
 
     else:
         st.info(
-            "取引データをアップロードし、左サイドバーの **② マスタ** を確認してから、"
-            " 上の **「振り分けを実行」** を押してください。"
+            "取引データをアップロードし、上の **「振り分けを実行」** を押してください。"
+            " （マスタの変更が必要なときだけ、左の **② マスタ** を開いてください。）"
         )
 
 with tab2:

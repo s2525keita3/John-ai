@@ -376,81 +376,81 @@ with st.sidebar:
     exclude_aozora_hq_noise = True
 
     st.divider()
-    st.subheader("② マスタ（ドロップダウン）")
-    full_pl = st.checkbox(
-        "自社PLは「全項目」をドロップダウンに表示",
-        value=True,
-        key="master_full_pl",
-    )
-    pl_opts = pl_dropdown_options(full_list=full_pl)
-
-    up_master = st.file_uploader("マスタをCSVで上書き読込（任意）", type=["csv"], key="up_master")
-    if up_master is not None:
-        try:
-            raw = up_master.read()
-            st.session_state.master_work = read_csv_auto(raw)
-            st.success("マスタを読み込みました")
-        except Exception as e:
-            st.error(f"読み込み失敗: {e}")
-
-    mw = st.session_state.master_work
-    n_master = len(mw)
-    ac1, ac2 = st.columns(2)
-    with ac1:
-        if st.button("➕ 行を追加", type="primary", key="master_add_row"):
-            base_cols = list(mw.columns) if not mw.empty else [
-                "摘要キーワード",
-                "自社PL勘定項目",
-                "金額下限",
-                "金額上限",
-                "データソース区分",
-            ]
-            if mw.empty:
-                st.session_state.master_work = pd.DataFrame(columns=base_cols)
-                mw = st.session_state.master_work
-            new_row = {c: ("（未選択）" if c == "自社PL勘定項目" else ("" if c in ("摘要キーワード", "データソース区分") else None)) for c in mw.columns}
-            st.session_state.master_work = pd.concat(
-                [st.session_state.master_work, pd.DataFrame([new_row])],
-                ignore_index=True,
-            )
-            st.rerun()
-    with ac2:
-        max_row = max(1, n_master)
-        del_no = st.number_input(
-            "削除行（1始まり）",
-            min_value=1,
-            max_value=max_row,
-            value=min(1, max_row),
-            key="master_del_row_no",
-            disabled=n_master == 0,
+    with st.expander("② マスタ（折りたたみ・通常は不要）", expanded=False):
+        full_pl = st.checkbox(
+            "自社PLは「全項目」をドロップダウンに表示",
+            value=True,
+            key="master_full_pl",
         )
-        if st.button("🗑 削除", key="master_del_row_btn", disabled=n_master == 0):
-            idx = int(del_no) - 1
-            st.session_state.master_work = st.session_state.master_work.drop(index=idx).reset_index(drop=True)
-            st.rerun()
+        pl_opts = pl_dropdown_options(full_list=full_pl)
 
-    edited = st.data_editor(
-        st.session_state.master_work,
-        column_config={
-            "摘要キーワード": st.column_config.TextColumn("摘要キーワード（部分一致）", width="medium"),
-            "自社PL勘定項目": st.column_config.SelectboxColumn(
-                "自社PL勘定項目",
-                options=pl_opts,
-                required=False,
-            ),
-            "金額下限": st.column_config.NumberColumn("金額下限（空＝無制限）", format="%d"),
-            "金額上限": st.column_config.NumberColumn("金額上限（空＝無制限）", format="%d"),
-            "データソース区分": st.column_config.TextColumn("データソース（空＝全ソース）", width="small"),
-        },
-        num_rows="dynamic",
-        width="stretch",
-        hide_index=False,
-        key="master_editor",
-    )
-    st.session_state.master_work = edited
+        up_master = st.file_uploader("マスタをCSVで上書き読込（任意）", type=["csv"], key="up_master")
+        if up_master is not None:
+            try:
+                raw = up_master.read()
+                st.session_state.master_work = read_csv_auto(raw)
+                st.success("マスタを読み込みました")
+            except Exception as e:
+                st.error(f"読み込み失敗: {e}")
 
-    sample_bytes = (_ROOT / "sample_master.csv").read_bytes()
-    st.download_button("サンプルマスタ（CSV）をダウンロード", data=sample_bytes, file_name="sample_master.csv")
+        mw = st.session_state.master_work
+        n_master = len(mw)
+        ac1, ac2 = st.columns(2)
+        with ac1:
+            if st.button("➕ 行を追加", type="primary", key="master_add_row"):
+                base_cols = list(mw.columns) if not mw.empty else [
+                    "摘要キーワード",
+                    "自社PL勘定項目",
+                    "金額下限",
+                    "金額上限",
+                    "データソース区分",
+                ]
+                if mw.empty:
+                    st.session_state.master_work = pd.DataFrame(columns=base_cols)
+                    mw = st.session_state.master_work
+                new_row = {c: ("（未選択）" if c == "自社PL勘定項目" else ("" if c in ("摘要キーワード", "データソース区分") else None)) for c in mw.columns}
+                st.session_state.master_work = pd.concat(
+                    [st.session_state.master_work, pd.DataFrame([new_row])],
+                    ignore_index=True,
+                )
+                st.rerun()
+        with ac2:
+            max_row = max(1, n_master)
+            del_no = st.number_input(
+                "削除行（1始まり）",
+                min_value=1,
+                max_value=max_row,
+                value=min(1, max_row),
+                key="master_del_row_no",
+                disabled=n_master == 0,
+            )
+            if st.button("🗑 削除", key="master_del_row_btn", disabled=n_master == 0):
+                idx = int(del_no) - 1
+                st.session_state.master_work = st.session_state.master_work.drop(index=idx).reset_index(drop=True)
+                st.rerun()
+
+        edited = st.data_editor(
+            st.session_state.master_work,
+            column_config={
+                "摘要キーワード": st.column_config.TextColumn("摘要キーワード（部分一致）", width="medium"),
+                "自社PL勘定項目": st.column_config.SelectboxColumn(
+                    "自社PL勘定項目",
+                    options=pl_opts,
+                    required=False,
+                ),
+                "金額下限": st.column_config.NumberColumn("金額下限（空＝無制限）", format="%d"),
+                "金額上限": st.column_config.NumberColumn("金額上限（空＝無制限）", format="%d"),
+                "データソース区分": st.column_config.TextColumn("データソース（空＝全ソース）", width="small"),
+            },
+            num_rows="dynamic",
+            width="stretch",
+            hide_index=False,
+            key="master_editor",
+        )
+        st.session_state.master_work = edited
+
+        sample_bytes = (_ROOT / "sample_master.csv").read_bytes()
+        st.download_button("サンプルマスタ（CSV）をダウンロード", data=sample_bytes, file_name="sample_master.csv")
 
 tab1, tab2 = st.tabs(
     ["① 読み込み・振り分け結果", "② 支給控除読み込み"]
@@ -829,8 +829,8 @@ with tab1:
 
     else:
         st.info(
-            "取引データをアップロードし、左サイドバーの **② マスタ** を確認してから、"
-            " 上の **「振り分けを実行」** を押してください。"
+            "取引データをアップロードし、上の **「振り分けを実行」** を押してください。"
+            " （マスタの変更が必要なときだけ、左の **② マスタ** を開いてください。）"
         )
 
 with tab2:
