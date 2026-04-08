@@ -57,6 +57,8 @@ HONBU_KEIHI_SPREADSHEET_URL = (
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
 # 左サイドバーで選ぶとメインに支給控除・本部人件費の画面だけを出す（タブ切替なし）
 FORMAT_PAYROLL_HQ = "支給控除一覧（本部人件費・xlsx／csv）"
+# 桜木町は「基本: あおぞら + 例外: 手動入力 + 小口」の合算で運用（横浜信金ルールは使わない）
+FORMAT_SAKURAGICHO = "桜木町（あおぞら＋手動＋小口）"
 
 # メインの「取引データ」「支給控除」アップロード枠を大きく見やすく。
 # stVerticalBlockBorderWrapper は Streamlit の版によって無いことがあるため、
@@ -375,6 +377,7 @@ with st.sidebar:
             "アメックス（activity CSV）",
             "横浜信用金庫（入出金明細・CSV／Excel）",
             "エネクスフリート（請求書PDF・本部カード0001〜0004）",
+            FORMAT_SAKURAGICHO,
             FORMAT_PAYROLL_HQ,
         ],
         key="format_preset",
@@ -431,6 +434,11 @@ with st.sidebar:
         summary_col = ""
         in_col = ""
         out_col = ""
+    elif format_preset == FORMAT_SAKURAGICHO:
+        date_col = "日付"
+        summary_col = "摘要"
+        in_col = "入金金額"
+        out_col = "出金金額"
     elif format_preset == FORMAT_PAYROLL_HQ:
         date_col = ""
         summary_col = ""
@@ -527,32 +535,192 @@ st.html(HONBU_MAIN_UPLOAD_DROPZONE_CSS)
 
 if format_preset != FORMAT_PAYROLL_HQ:
     with st.container(border=True):
-        st.subheader("読み込み（取引データ）")
-        st.caption(
-            "左の **処理モード** に合わせた **CSV・Excel・PDF** をアップロードします。"
-            " 下の枠にドラッグ＆ドロップするか、枠内をクリックしてください。"
-        )
-        tx_file = st.file_uploader(
-            "取引データ（CSV／Excel／PDF）",
-            type=["csv", "pdf", "xlsx", "xlsm"],
-            key="tx",
-            label_visibility="collapsed",
-            help="あおぞら・アメックス・横浜信金・エネフリ請求書など、左で選んだ形式に対応したファイル",
-        )
+        if format_preset == FORMAT_SAKURAGICHO:
+            st.subheader("読み込み（桜木町）")
+            st.caption(
+                "桜木町は **あおぞら明細** を主にし、例外は **手動入力** と **小口** で足します。"
+            )
+
+            st.markdown("##### あおぞら口座明細（桜木町）")
+            st.caption("CSV をドラッグ＆ドロップ、または枠内をクリック（未入力でもOK）")
+            tx_file = st.file_uploader(
+                "あおぞら口座明細（CSV）",
+                type=["csv"],
+                key="tx",
+                label_visibility="collapsed",
+                help="あおぞら口座の標準CSV。桜木町分をここに入れます（無い場合は未入力のままでOK）。",
+            )
+
+            if "sakuragicho_manual_df" not in st.session_state:
+                st.session_state.sakuragicho_manual_df = pd.DataFrame(
+                    columns=("日付", "摘要", "出金額", "入金額", "振分PL項目", "メモ")
+                )
+            if "sakuragicho_petty_df" not in st.session_state:
+                st.session_state.sakuragicho_petty_df = pd.DataFrame(
+                    columns=("日付", "摘要", "出金額", "入金額", "振分PL項目", "メモ")
+                )
+
+            st.divider()
+            st.markdown("##### 手動入力（例外・調整）")
+            st.caption("固定額・相殺など、口座明細に無い（または補正したい）分だけ追加します。")
+            manual_edited = st.data_editor(
+                st.session_state.sakuragicho_manual_df,
+                num_rows="dynamic",
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "日付": st.column_config.TextColumn("日付（YYYYMMDD など）", width="small"),
+                    "摘要": st.column_config.TextColumn("摘要", width="large"),
+                    "出金額": st.column_config.NumberColumn("出金額", format="%d"),
+                    "入金額": st.column_config.NumberColumn("入金額", format="%d"),
+                    "振分PL項目": st.column_config.SelectboxColumn(
+                        "振分PL項目",
+                        options=pl_opts,
+                        required=False,
+                    ),
+                    "メモ": st.column_config.TextColumn("メモ", width="medium"),
+                },
+                key="sakuragicho_manual_editor",
+            )
+            st.session_state.sakuragicho_manual_df = manual_edited
+
+            st.divider()
+            st.markdown("##### 小口（手入力）")
+            st.caption("小口現金など、少額で手入力したい分だけ追加します。")
+            petty_edited = st.data_editor(
+                st.session_state.sakuragicho_petty_df,
+                num_rows="dynamic",
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "日付": st.column_config.TextColumn("日付（YYYYMMDD など）", width="small"),
+                    "摘要": st.column_config.TextColumn("摘要", width="large"),
+                    "出金額": st.column_config.NumberColumn("出金額", format="%d"),
+                    "入金額": st.column_config.NumberColumn("入金額", format="%d"),
+                    "振分PL項目": st.column_config.SelectboxColumn(
+                        "振分PL項目",
+                        options=pl_opts,
+                        required=False,
+                    ),
+                    "メモ": st.column_config.TextColumn("メモ", width="medium"),
+                },
+                key="sakuragicho_petty_editor",
+            )
+            st.session_state.sakuragicho_petty_df = petty_edited
+        else:
+            st.subheader("読み込み（取引データ）")
+            st.caption(
+                "左の **処理モード** に合わせた **CSV・Excel・PDF** をアップロードします。"
+                " 下の枠にドラッグ＆ドロップするか、枠内をクリックしてください。"
+            )
+            tx_file = st.file_uploader(
+                "取引データ（CSV／Excel／PDF）",
+                type=["csv", "pdf", "xlsx", "xlsm"],
+                key="tx",
+                label_visibility="collapsed",
+                help="あおぞら・アメックス・横浜信金・エネフリ請求書など、左で選んだ形式に対応したファイル",
+            )
         st.divider()
         run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")
     st.divider()
     render_amazon_askul_aozora_reconcile_expander(key_prefix="honbu_keihi_")
 
     if run_keihi:
-        if tx_file is None:
+        if format_preset != FORMAT_SAKURAGICHO and tx_file is None:
             st.error("取引ファイル（CSV または PDF）をアップロードしてください。")
             st.stop()
 
-        raw = tx_file.getvalue()
+        raw = tx_file.getvalue() if tx_file is not None else b""
         name = getattr(tx_file, "name", "") or ""
 
-        if format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
+        if format_preset == FORMAT_SAKURAGICHO:
+            # 桜木町: あおぞら（任意）＋手動＋小口を合算して振り分け
+            parts: list[pd.DataFrame] = []
+
+            if tx_file is not None:
+                try:
+                    tx_df = read_csv_auto(raw)
+                except Exception as e:
+                    st.error(f"あおぞらCSVの読み込みに失敗しました: {e}")
+                    st.stop()
+
+                for need in (summary_col, out_col):
+                    if need not in tx_df.columns:
+                        st.error(f"列「{need}」がありません。現在の列: {list(tx_df.columns)}")
+                        st.stop()
+
+                w = tx_df.copy()
+                w = w.rename(
+                    columns={
+                        summary_col: "摘要",
+                        out_col: "出金額",
+                        in_col: "入金額",
+                    }
+                )
+                if date_col in w.columns:
+                    w = w.rename(columns={date_col: "日付"})
+                if exclude_aozora_hq_noise:
+                    w = filter_aozora_hq_noise(w, summary_col="摘要")
+                if add_src_auto and source_col not in w.columns:
+                    w[source_col] = "あおぞら（桜木町）"
+                parts.append(w)
+
+            def _manual_block_to_rows(df_in: pd.DataFrame, src: str) -> pd.DataFrame:
+                if df_in is None or df_in.empty:
+                    return pd.DataFrame()
+                df = df_in.copy()
+                for c in ("日付", "摘要", "出金額", "入金額", "振分PL項目", "メモ"):
+                    if c not in df.columns:
+                        df[c] = ""
+                df["摘要"] = df["摘要"].fillna("").astype(str).str.strip()
+                df["振分PL項目"] = df["振分PL項目"].fillna("").astype(str).str.strip()
+                df["メモ"] = df["メモ"].fillna("").astype(str).str.strip()
+                df["出金額"] = pd.to_numeric(df["出金額"], errors="coerce").fillna(0)
+                df["入金額"] = pd.to_numeric(df["入金額"], errors="coerce").fillna(0)
+                mask = df["摘要"].astype(str).str.strip().ne("") & (
+                    (df["出金額"].abs() > 0) | (df["入金額"].abs() > 0)
+                )
+                df = df.loc[mask].copy()
+                if df.empty:
+                    return df
+                df[source_col] = src
+                df["分類結果"] = "確定"
+                return df
+
+            man = _manual_block_to_rows(st.session_state.get("sakuragicho_manual_df"), "手動（桜木町）")
+            pet = _manual_block_to_rows(st.session_state.get("sakuragicho_petty_df"), "小口（桜木町）")
+
+            # 口座明細（あおぞら分）はマスタで分類、手動・小口は入力済みPLを優先
+            master_rows = load_master_dataframe(st.session_state.master_work)
+            if not master_rows:
+                st.error("マスタに有効な行がありません（摘要キーワードと自社PLを両方指定）。")
+                st.stop()
+            scol = source_col if use_source and source_col in (parts[0].columns if parts else []) else None
+
+            classified_parts: list[pd.DataFrame] = []
+            if parts:
+                work0 = parts[0]
+                classified_parts.append(classify_dataframe(work0, master_rows, summary_col="摘要", source_col=scol))
+            for extra in (man, pet):
+                if extra is None or extra.empty:
+                    continue
+                # 手入力で PL を選んでいない行は「要確認」扱いに寄せる
+                plv = extra["振分PL項目"].fillna("").astype(str).str.strip()
+                needs = plv.eq("") | plv.isin(("（未選択）", "—", "-"))
+                extra.loc[needs, "分類結果"] = "要確認"
+                extra.loc[needs, "メモ"] = (
+                    extra.loc[needs, "メモ"].fillna("").astype(str).str.strip()
+                    + (" " if extra.loc[needs, "メモ"].fillna("").astype(str).str.strip().ne("").any() else "")
+                    + "手入力（桜木町）: 振分PL項目が未選択"
+                ).str.strip()
+                classified_parts.append(extra)
+
+            if not classified_parts:
+                st.error("あおぞら明細・手動入力・小口のいずれもデータがありません。")
+                st.stop()
+
+            result = pd.concat(classified_parts, axis=0, ignore_index=True)
+        elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
             if not name.lower().endswith(".pdf"):
                 st.error("このプリセットは **PDF** を選んでください（エネクスフリート請求書）。")
                 st.stop()
@@ -682,54 +850,59 @@ if format_preset != FORMAT_PAYROLL_HQ:
         if format_preset == "横浜信用金庫（入出金明細・CSV／Excel）":
             work = apply_yokohama_hq_master_rules(work)
 
-        master_rows = load_master_dataframe(st.session_state.master_work)
-        if not master_rows:
-            st.error("マスタに有効な行がありません（摘要キーワードと自社PLを両方指定）。")
-            st.stop()
+        if format_preset != FORMAT_SAKURAGICHO:
+            master_rows = load_master_dataframe(st.session_state.master_work)
+            if not master_rows:
+                st.error("マスタに有効な行がありません（摘要キーワードと自社PLを両方指定）。")
+                st.stop()
 
-        scol = source_col if use_source and source_col in work.columns else None
+        if format_preset != FORMAT_SAKURAGICHO:
+            scol = source_col if use_source and source_col in work.columns else None
 
-        if format_preset == "横浜信用金庫（入出金明細・CSV／Excel）" and "取込対象外" in work.columns:
-            ex_mask = work["取込対象外"].fillna(False)
-            work_in = work.loc[~ex_mask]
-            work_ex = work.loc[ex_mask]
-        else:
-            work_in = work
-            work_ex = pd.DataFrame()
+        if format_preset != FORMAT_SAKURAGICHO:
+            if format_preset == "横浜信用金庫（入出金明細・CSV／Excel）" and "取込対象外" in work.columns:
+                ex_mask = work["取込対象外"].fillna(False)
+                work_in = work.loc[~ex_mask]
+                work_ex = work.loc[ex_mask]
+            else:
+                work_in = work
+                work_ex = pd.DataFrame()
 
-        if work_in.empty and work_ex.empty:
-            st.error("取引行がありません。")
-            st.stop()
+        if format_preset != FORMAT_SAKURAGICHO:
+            if work_in.empty and work_ex.empty:
+                st.error("取引行がありません。")
+                st.stop()
 
-        if not work_in.empty:
-            result_in = classify_dataframe(
-                work_in, master_rows, summary_col="摘要", source_col=scol
-            )
-            if "本部調整メモ" in result_in.columns:
-                adj = result_in["本部調整メモ"].fillna("").astype(str).str.strip()
-                m = adj.ne("")
-                result_in.loc[m, "メモ"] = (
-                    result_in.loc[m, "メモ"].fillna("").astype(str).str.strip()
-                    + " "
-                    + adj[m]
-                ).str.strip()
-        else:
-            result_in = pd.DataFrame()
+        if format_preset != FORMAT_SAKURAGICHO:
+            if not work_in.empty:
+                result_in = classify_dataframe(
+                    work_in, master_rows, summary_col="摘要", source_col=scol
+                )
+                if "本部調整メモ" in result_in.columns:
+                    adj = result_in["本部調整メモ"].fillna("").astype(str).str.strip()
+                    m = adj.ne("")
+                    result_in.loc[m, "メモ"] = (
+                        result_in.loc[m, "メモ"].fillna("").astype(str).str.strip()
+                        + " "
+                        + adj[m]
+                    ).str.strip()
+            else:
+                result_in = pd.DataFrame()
 
-        if not work_ex.empty:
-            result_ex = work_ex.copy()
-            result_ex["分類結果"] = "除外"
-            result_ex["振分PL項目"] = ""
-            result_ex["メモ"] = result_ex["取込対象外理由"].fillna("")
-        else:
-            result_ex = pd.DataFrame()
+            if not work_ex.empty:
+                result_ex = work_ex.copy()
+                result_ex["分類結果"] = "除外"
+                result_ex["振分PL項目"] = ""
+                result_ex["メモ"] = result_ex["取込対象外理由"].fillna("")
+            else:
+                result_ex = pd.DataFrame()
 
-        if result_in.empty:
-            result = result_ex
-        elif result_ex.empty:
-            result = result_in
-        else:
-            result = pd.concat([result_in, result_ex]).sort_index()
+            if result_in.empty:
+                result = result_ex
+            elif result_ex.empty:
+                result = result_in
+            else:
+                result = pd.concat([result_in, result_ex]).sort_index()
 
         st.subheader("振り分け結果")
         st.success("処理が完了しました。続きに集計・明細・CSVがあります。")
