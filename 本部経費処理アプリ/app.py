@@ -490,9 +490,10 @@ if format_preset != FORMAT_PAYROLL_HQ:
             label_visibility="collapsed",
             help="あおぞら・アメックス・横浜信金・エネフリ請求書など、左で選んだ形式に対応したファイル",
         )
-    render_amazon_askul_aozora_reconcile_expander(key_prefix="honbu_keihi_")
+        st.divider()
+        run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")
     st.divider()
-    run_keihi = st.button("振り分けを実行", type="primary", key="run_keihi")
+    render_amazon_askul_aozora_reconcile_expander(key_prefix="honbu_keihi_")
 
     if run_keihi:
         if tx_file is None:
