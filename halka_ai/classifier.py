@@ -82,7 +82,7 @@ def _expense_amount(row: pd.Series) -> float:
                 return abs(v)
     if "入金額" in row.index:
         v = parse_amount_cell(row.get("入金額"))
-        if v is not None and v < 0:
+        if v is not None and v != 0:
             return abs(v)
     return 0.0
 

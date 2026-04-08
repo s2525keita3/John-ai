@@ -235,6 +235,50 @@ def _sanitize_dataframe_for_streamlit_data_editor(df: pd.DataFrame) -> pd.DataFr
     return out
 
 
+def _infer_halka_branch(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    halka 側は支店で見たいことがあるため、支店列が無いときだけ簡易推定して付与する。
+    - 既に「支店」列がある場合はそのまま。
+    - 「拠点」列があれば支店として採用。
+    - それ以外は摘要からキーワードで推定（最低限: 中村橋（練馬））。
+    """
+    if df.empty:
+        return df
+    if "支店" in df.columns:
+        return df
+    out = df.copy()
+    if "拠点" in out.columns:
+        out["支店"] = out["拠点"].map(lambda x: "" if pd.isna(x) else str(x).strip())
+        return out
+    if "摘要" not in out.columns:
+        return out
+    s = out["摘要"].fillna("").astype(str)
+    out["支店"] = "本部"
+    m_nakamura = s.str.contains("中村橋", na=False) | s.str.contains("練馬", na=False)
+    out.loc[m_nakamura, "支店"] = "中村橋（練馬）"
+    return out
+
+
+def _aggregate_by_branch(df: pd.DataFrame) -> pd.DataFrame:
+    """支店別に出金・入金を合計（簡易）。"""
+    if df.empty:
+        return pd.DataFrame()
+    tmp = _infer_halka_branch(df)
+    if "支店" not in tmp.columns:
+        return pd.DataFrame()
+    has_out = "出金額" in tmp.columns
+    has_in = "入金額" in tmp.columns
+    if not has_out and not has_in:
+        return pd.DataFrame()
+    w = tmp.copy()
+    w["_出金"] = pd.to_numeric(w["出金額"], errors="coerce").fillna(0).abs() if has_out else 0.0
+    w["_入金"] = pd.to_numeric(w["入金額"], errors="coerce").fillna(0).abs() if has_in else 0.0
+    g = w.groupby("支店", dropna=False).agg({"_出金": "sum", "_入金": "sum"}).reset_index()
+    g.columns = ["支店", "合計額（出金）", "合計額（入金）"]
+    g["_sort"] = g["合計額（出金）"] + g["合計額（入金）"]
+    return g.sort_values("_sort", ascending=False).drop(columns=["_sort"])
+
+
 # 本部人件費テーブル（画面）では内訳の社保4列を出さない（CSVには残す）
 _PAYROLL_DISPLAY_OMIT_COLS = (
     "健康保険料(会社)",
@@ -271,11 +315,12 @@ _PL_CLASSIFIED_CSV_COLUMNS = (
     "振分PL項目",
     "摘要",
     "出金額",
+    "入金額",
 )
 
 
 def _pl_classified_csv_bytes(df: pd.DataFrame) -> bytes:
-    """PL分類済みCSV用: 日付・振分PL項目・摘要・出金額のみ（マネフォ等の余列は出さない）。"""
+    """PL分類済みCSV用: 日付・振分PL項目・摘要・出金額・入金額のみ（マネフォ等の余列は出さない）。"""
     cols = [c for c in _PL_CLASSIFIED_CSV_COLUMNS if c in df.columns]
     if not cols:
         return pd.DataFrame(columns=list(_PL_CLASSIFIED_CSV_COLUMNS)).to_csv(index=False).encode(
@@ -733,6 +778,13 @@ with tab1:
                 "「振分PL項目」および「出金額」または「入金額」の列が必要です。"
             )
 
+        st.subheader("支店別 合計（出金・入金・簡易）")
+        b = _aggregate_by_branch(result_vis)
+        if b.empty:
+            st.caption("支店情報が無い（または推定できない）ため、支店別の集計は出しません。")
+        else:
+            st.dataframe(b, use_container_width=True, hide_index=True)
+
         st.divider()
         st.subheader("要確認・判断不能（レビュー・自由記載）")
         st.caption(
@@ -782,7 +834,7 @@ with tab1:
                 "PL分類済みのみCSV",
                 data=_pl_classified_csv_bytes(pl_only_df),
                 file_name=f"本部経費_PL分類済みのみ_{stamp}.csv",
-                help="振分PLが付き、取込対象外・除外でない行。**日付・振分PL項目・摘要・出金額**のみ出力。",
+                help="振分PLが付き、取込対象外・除外でない行。**日付・振分PL項目・摘要・出金額・入金額**のみ出力。",
             )
         else:
             dl2.caption("PL分類済みの行がありません。")
