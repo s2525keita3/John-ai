@@ -279,6 +279,32 @@ def _aggregate_by_branch(df: pd.DataFrame) -> pd.DataFrame:
     return g.sort_values("_sort", ascending=False).drop(columns=["_sort"])
 
 
+def _aggregate_by_branch_pl(df: pd.DataFrame) -> pd.DataFrame:
+    """支店×振分PL項目で、出金・入金の合計（内訳用）。"""
+    if df.empty:
+        return pd.DataFrame()
+    tmp = _infer_halka_branch(df)
+    if "支店" not in tmp.columns or "振分PL項目" not in tmp.columns:
+        return pd.DataFrame()
+    has_out = "出金額" in tmp.columns
+    has_in = "入金額" in tmp.columns
+    if not has_out and not has_in:
+        return pd.DataFrame()
+    w = tmp.copy()
+    w["_出金"] = pd.to_numeric(w["出金額"], errors="coerce").fillna(0).abs() if has_out else 0.0
+    w["_入金"] = pd.to_numeric(w["入金額"], errors="coerce").fillna(0).abs() if has_in else 0.0
+    pl = w["振分PL項目"].fillna("").astype(str).str.strip()
+    w = w[pl.ne("") & ~pl.isin(("（未選択）", "—", "-"))]
+    g = (
+        w.groupby(("支店", "振分PL項目"), dropna=False)
+        .agg({"_出金": "sum", "_入金": "sum"})
+        .reset_index()
+    )
+    g.columns = ["支店", "振分PL項目", "合計額（出金）", "合計額（入金）"]
+    g["_sort"] = g["合計額（出金）"] + g["合計額（入金）"]
+    return g.sort_values(["支店", "_sort"], ascending=[True, False]).drop(columns=["_sort"])
+
+
 # 本部人件費テーブル（画面）では内訳の社保4列を出さない（CSVには残す）
 _PAYROLL_DISPLAY_OMIT_COLS = (
     "健康保険料(会社)",
@@ -784,6 +810,26 @@ with tab1:
             st.caption("支店情報が無い（または推定できない）ため、支店別の集計は出しません。")
         else:
             st.dataframe(b, use_container_width=True, hide_index=True)
+            st.caption("内訳（支店×勘定項目）と CSV 出力はこの下です。")
+
+            bp = _aggregate_by_branch_pl(result_vis)
+            if not bp.empty:
+                st.subheader("支店別 内訳（支店×勘定項目）")
+                st.dataframe(bp, use_container_width=True, hide_index=True)
+
+                csum, cdet = st.columns(2)
+                csum.download_button(
+                    "支店別 合計（CSV）",
+                    data=b.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"halka_支店別合計_{stamp}.csv",
+                    help="支店ごとの出金・入金合計。",
+                )
+                cdet.download_button(
+                    "支店別 内訳（CSV）",
+                    data=bp.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"halka_支店別内訳_{stamp}.csv",
+                    help="支店×振分PL項目ごとの出金・入金合計。",
+                )
 
         st.divider()
         st.subheader("要確認・判断不能（レビュー・自由記載）")
