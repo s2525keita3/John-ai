@@ -55,6 +55,8 @@ HONBU_KEIHI_SPREADSHEET_URL = (
 
 # 支給控除一覧：氏名行の列見出しに含まれるキーワードで本部対象列を特定
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
+# 左サイドバーで選ぶとメインに支給控除・本部人件費の画面だけを出す（タブ切替なし）
+FORMAT_PAYROLL_HQ = "支給控除一覧（本部人件費・xlsx／csv）"
 
 
 def _combine_yokohama_summary(df: pd.DataFrame) -> pd.Series:
@@ -284,7 +286,7 @@ if "master_work" not in st.session_state:
 
 enex_master_df: pd.DataFrame | None = None
 with st.sidebar:
-    st.subheader("取引CSVの列名")
+    st.subheader("処理モード")
     format_preset = st.selectbox(
         "フォーマット",
         [
@@ -292,6 +294,7 @@ with st.sidebar:
             "アメックス（activity CSV）",
             "横浜信用金庫（入出金明細・CSV／Excel）",
             "エネクスフリート（請求書PDF・本部カード0001〜0004）",
+            FORMAT_PAYROLL_HQ,
         ],
         key="format_preset",
     )
@@ -322,7 +325,7 @@ with st.sidebar:
                 if is_probably_pdf_bytes(raw_m):
                     st.error(
                         "カードマスタ（任意）の欄に **PDF** が入っています。"
-                        " ここは **CSV のみ** です。請求書PDFは **タブ①の取引データ** にアップロードしてください。"
+                        " ここは **CSV のみ** です。請求書PDFは **メインの取引データ** にアップロードしてください。"
                     )
                 else:
                     enex_master_df = read_csv_auto(raw_m)
@@ -343,6 +346,11 @@ with st.sidebar:
                 file_name="sample_enex_fleet_card_master.csv",
                 key="dl_sample_enex_master",
             )
+        date_col = ""
+        summary_col = ""
+        in_col = ""
+        out_col = ""
+    elif format_preset == FORMAT_PAYROLL_HQ:
         date_col = ""
         summary_col = ""
         in_col = ""
@@ -433,11 +441,7 @@ with st.sidebar:
         sample_bytes = (_ROOT / "sample_master.csv").read_bytes()
         st.download_button("サンプルマスタ（CSV）をダウンロード", data=sample_bytes, file_name="sample_master.csv")
 
-tab1, tab2 = st.tabs(
-    ["① 読み込み・振り分け結果", "② 支給控除読み込み"]
-)
-
-with tab1:
+if format_preset != FORMAT_PAYROLL_HQ:
     st.markdown("### 読み込み（取引データ）")
     tx_file = st.file_uploader(
         "取引データ（CSV／Excel／PDF）",
@@ -450,7 +454,7 @@ with tab1:
 
     if run_keihi:
         if tx_file is None:
-            st.error("取引ファイル（CSV または PDF）をアップロードしてください（タブ①）。")
+            st.error("取引ファイル（CSV または PDF）をアップロードしてください。")
             st.stop()
 
         raw = tx_file.getvalue()
@@ -763,7 +767,7 @@ with tab1:
             " （マスタの変更が必要なときだけ、左の **② マスタ** を開いてください。）"
         )
 
-with tab2:
+else:
     st.markdown("### 支給控除の読み込み・本部人件費")
     st.caption(
         "「支給合計」＋会社負担社保（健康・介護・厚生・子ども・子育て）を **人件費(支給額,健康,介護,厚生,子ども)** に集計します。"
