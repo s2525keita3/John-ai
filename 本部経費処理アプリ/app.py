@@ -225,6 +225,8 @@ def _result_table_column_config(
         label = "スタッフ（イニシャル）" if enex_compact else "スタッフ名"
         w = "small" if enex_compact else "medium"
         cfg["スタッフ名"] = st.column_config.TextColumn(label, width=w)
+    if "スタッフ" in df.columns:
+        cfg["スタッフ"] = st.column_config.TextColumn("スタッフ（名字）", width="small")
     if "取込対象外理由" in df.columns:
         cfg["取込対象外理由"] = st.column_config.TextColumn("取込対象外理由", width="large")
     if "メモ" in df.columns:
@@ -553,11 +555,11 @@ if format_preset != FORMAT_PAYROLL_HQ:
 
             if "sakuragicho_manual_df" not in st.session_state:
                 st.session_state.sakuragicho_manual_df = pd.DataFrame(
-                    columns=("日付", "摘要", "出金額", "入金額", "振分PL項目", "メモ")
+                    columns=("日付", "スタッフ", "摘要", "出金額", "入金額", "振分PL項目", "メモ")
                 )
             if "sakuragicho_petty_df" not in st.session_state:
                 st.session_state.sakuragicho_petty_df = pd.DataFrame(
-                    columns=("日付", "摘要", "出金額", "入金額", "振分PL項目", "メモ")
+                    columns=("日付", "スタッフ", "摘要", "出金額", "入金額", "振分PL項目", "メモ")
                 )
 
             st.divider()
@@ -570,6 +572,7 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 hide_index=True,
                 column_config={
                     "日付": st.column_config.TextColumn("日付（YYYYMMDD など）", width="small"),
+                    "スタッフ": st.column_config.TextColumn("スタッフ（名字）", width="small"),
                     "摘要": st.column_config.TextColumn("摘要", width="large"),
                     "出金額": st.column_config.NumberColumn("出金額", format="%d"),
                     "入金額": st.column_config.NumberColumn("入金額", format="%d"),
@@ -585,28 +588,30 @@ if format_preset != FORMAT_PAYROLL_HQ:
             st.session_state.sakuragicho_manual_df = manual_edited
 
             st.divider()
-            st.markdown("##### 小口（手入力）")
-            st.caption("小口現金など、少額で手入力したい分だけ追加します。")
-            petty_edited = st.data_editor(
-                st.session_state.sakuragicho_petty_df,
-                num_rows="dynamic",
-                width="stretch",
-                hide_index=True,
-                column_config={
-                    "日付": st.column_config.TextColumn("日付（YYYYMMDD など）", width="small"),
-                    "摘要": st.column_config.TextColumn("摘要", width="large"),
-                    "出金額": st.column_config.NumberColumn("出金額", format="%d"),
-                    "入金額": st.column_config.NumberColumn("入金額", format="%d"),
-                    "振分PL項目": st.column_config.SelectboxColumn(
-                        "振分PL項目",
-                        options=pl_opts,
-                        required=False,
-                    ),
-                    "メモ": st.column_config.TextColumn("メモ", width="medium"),
-                },
-                key="sakuragicho_petty_editor",
+            st.markdown("##### 小口（Excel/CSV をドロップ）")
+            st.caption("小口現金などの明細を **Excel（.xlsx）** でアップロードできます（CSV も可）。")
+            petty_file = st.file_uploader(
+                "小口（Excel/CSV）",
+                type=["xlsx", "xlsm", "csv"],
+                key="sakuragicho_petty_upload",
+                label_visibility="collapsed",
+                help="列名は自由ですが、なるべく「日付」「スタッフ（名字）」「摘要」「出金額」「入金額」「振分PL項目」「メモ」に近い名前にしてください。",
             )
-            st.session_state.sakuragicho_petty_df = petty_edited
+            if petty_file is not None:
+                try:
+                    raw_p = petty_file.getvalue()
+                    fname = getattr(petty_file, "name", "") or ""
+                    if fname.lower().endswith((".xlsx", ".xlsm")):
+                        petty_df = pd.read_excel(io.BytesIO(raw_p))
+                    else:
+                        petty_df = read_csv_auto(raw_p)
+                    st.session_state.sakuragicho_petty_df = petty_df
+                    st.success(f"小口を読み込みました: {fname}")
+                except Exception as e:
+                    st.error(f"小口ファイルの読み込みに失敗しました: {e}")
+            if not st.session_state.sakuragicho_petty_df.empty:
+                st.caption("小口（読み込み結果・先頭）")
+                st.dataframe(st.session_state.sakuragicho_petty_df.head(50), width="stretch", hide_index=True)
         else:
             st.subheader("読み込み（取引データ）")
             st.caption(
@@ -669,9 +674,10 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 if df_in is None or df_in.empty:
                     return pd.DataFrame()
                 df = df_in.copy()
-                for c in ("日付", "摘要", "出金額", "入金額", "振分PL項目", "メモ"):
+                for c in ("日付", "スタッフ", "摘要", "出金額", "入金額", "振分PL項目", "メモ"):
                     if c not in df.columns:
                         df[c] = ""
+                df["スタッフ"] = df["スタッフ"].fillna("").astype(str).str.strip()
                 df["摘要"] = df["摘要"].fillna("").astype(str).str.strip()
                 df["振分PL項目"] = df["振分PL項目"].fillna("").astype(str).str.strip()
                 df["メモ"] = df["メモ"].fillna("").astype(str).str.strip()
@@ -687,8 +693,68 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 df["分類結果"] = "確定"
                 return df
 
+            def _extract_surname(s: str) -> str:
+                t = (s or "").strip().replace("　", " ")
+                if t == "":
+                    return ""
+                return t.split(" ")[0].strip()
+
+            def _normalize_petty_like(df_raw: pd.DataFrame) -> pd.DataFrame:
+                """
+                小口Excel/CSVを、アプリ内部の列へ寄せる。
+                期待列（完全一致でなくても拾う）:
+                - 日付
+                - スタッフ（名字）/ 担当 / 氏名
+                - 摘要 / 内容 / 支払先
+                - 出金額 / 金額（出金）/ 支出
+                - 入金額（あれば）
+                - 振分PL項目（あれば）
+                - メモ（あれば）
+                """
+                if df_raw is None or df_raw.empty:
+                    return pd.DataFrame()
+                df = df_raw.copy()
+                colmap: dict[str, str] = {}
+                for c in df.columns:
+                    s = str(c).strip()
+                    if s in ("日付", "日付（YYYYMMDD など）"):
+                        colmap[c] = "日付"
+                    elif any(k in s for k in ("スタッフ", "担当", "氏名", "名字")):
+                        colmap[c] = "スタッフ"
+                    elif any(k in s for k in ("摘要", "内容", "支払先", "取引先")):
+                        colmap[c] = "摘要"
+                    elif any(k in s for k in ("出金額", "支出", "支払", "金額（出金）")):
+                        colmap[c] = "出金額"
+                    elif "入金額" in s:
+                        colmap[c] = "入金額"
+                    elif "振分PL" in s or "勘定" in s or "PL" == s:
+                        colmap[c] = "振分PL項目"
+                    elif "メモ" in s or "備考" in s:
+                        colmap[c] = "メモ"
+                if colmap:
+                    df = df.rename(columns=colmap)
+
+                # 必須列の補完
+                for c in ("日付", "スタッフ", "摘要", "出金額", "入金額", "振分PL項目", "メモ"):
+                    if c not in df.columns:
+                        df[c] = ""
+
+                # 金額は数値化（空は0）
+                df["出金額"] = pd.to_numeric(df["出金額"], errors="coerce").fillna(0)
+                df["入金額"] = pd.to_numeric(df["入金額"], errors="coerce").fillna(0)
+                df["摘要"] = df["摘要"].fillna("").astype(str).str.strip()
+                df["スタッフ"] = df["スタッフ"].fillna("").astype(str).map(_extract_surname)
+                df["振分PL項目"] = df["振分PL項目"].fillna("").astype(str).str.strip()
+                df["メモ"] = df["メモ"].fillna("").astype(str).str.strip()
+                mask = df["摘要"].astype(str).str.strip().ne("") & (
+                    (df["出金額"].abs() > 0) | (df["入金額"].abs() > 0)
+                )
+                return df.loc[mask, ("日付", "スタッフ", "摘要", "出金額", "入金額", "振分PL項目", "メモ")].copy()
+
             man = _manual_block_to_rows(st.session_state.get("sakuragicho_manual_df"), "手動（桜木町）")
-            pet = _manual_block_to_rows(st.session_state.get("sakuragicho_petty_df"), "小口（桜木町）")
+            pet_raw = st.session_state.get("sakuragicho_petty_df")
+            pet_norm = _normalize_petty_like(pet_raw) if isinstance(pet_raw, pd.DataFrame) else pd.DataFrame()
+            pet = _manual_block_to_rows(pet_norm, "小口（桜木町）")
 
             # 口座明細（あおぞら分）はマスタで分類、手動・小口は入力済みPLを優先
             master_rows = load_master_dataframe(st.session_state.master_work)
@@ -720,6 +786,9 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 st.stop()
 
             result = pd.concat(classified_parts, axis=0, ignore_index=True)
+            # スタッフ（名字）別にも見えるよう、空でなければ整形して持つ
+            if "スタッフ" in result.columns:
+                result["スタッフ"] = result["スタッフ"].fillna("").astype(str).map(_extract_surname)
         elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
             if not name.lower().endswith(".pdf"):
                 st.error("このプリセットは **PDF** を選んでください（エネクスフリート請求書）。")
@@ -948,6 +1017,29 @@ if format_preset != FORMAT_PAYROLL_HQ:
             else:
                 st.warning(
                     "「振分PL項目」および「出金額」または「入金額」の列が必要です。"
+                )
+
+        if format_preset == FORMAT_SAKURAGICHO and "スタッフ" in result.columns:
+            staff = result["スタッフ"].fillna("").astype(str).str.strip()
+            if staff.ne("").any() and "振分PL項目" in result.columns:
+                st.subheader("スタッフ別 内訳（スタッフ×勘定項目）")
+                tmp = result.copy()
+                tmp = tmp[staff.ne("")].copy()
+                tmp["_出金"] = pd.to_numeric(tmp.get("出金額"), errors="coerce").fillna(0).abs()
+                tmp["_入金"] = pd.to_numeric(tmp.get("入金額"), errors="coerce").fillna(0).abs()
+                g = (
+                    tmp.groupby(("スタッフ", "振分PL項目"), dropna=False)
+                    .agg({"_出金": "sum", "_入金": "sum"})
+                    .reset_index()
+                )
+                g.columns = ["スタッフ", "振分PL項目", "合計額（出金）", "合計額（入金）"]
+                g["_sort"] = g["合計額（出金）"] + g["合計額（入金）"]
+                g = g.sort_values(["スタッフ", "_sort"], ascending=[True, False]).drop(columns=["_sort"])
+                st.dataframe(g, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "スタッフ別 内訳（CSV）",
+                    data=g.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"桜木町_スタッフ別内訳_{stamp}.csv",
                 )
 
         if format_preset in _yokohama_presets:
