@@ -184,6 +184,26 @@ def _result_table_for_display(
     return out
 
 
+def _yokohama_excluded_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """横浜信金の除外行のみ。取込対象外理由・メモを画面に出す（全明細では省略している列を含む）。"""
+    out = df.copy()
+    omit = tuple(c for c in _RESULT_TABLE_OMIT_COLS if c != "メモ")
+    extra = ("計", "出金額_通帳")
+    drop_cols = [c for c in omit + extra if c in out.columns]
+    if drop_cols:
+        out = out.drop(columns=drop_cols)
+    cols = list(out.columns)
+    if "振分PL項目" in cols:
+        enex_first = [c for c in _ENEX_DISPLAY_COLS_ORDER if c in cols]
+        if "日付" in cols:
+            rest = [c for c in cols if c not in ("日付", "振分PL項目", *enex_first)]
+            out = out[["日付", "振分PL項目"] + enex_first + rest]
+        else:
+            rest = [c for c in cols if c not in ("振分PL項目", *enex_first)]
+            out = out[["振分PL項目"] + enex_first + rest]
+    return out
+
+
 def _result_table_column_config(
     df: pd.DataFrame, *, enex_compact: bool = False
 ) -> dict:
@@ -203,6 +223,10 @@ def _result_table_column_config(
         label = "スタッフ（イニシャル）" if enex_compact else "スタッフ名"
         w = "small" if enex_compact else "medium"
         cfg["スタッフ名"] = st.column_config.TextColumn(label, width=w)
+    if "取込対象外理由" in df.columns:
+        cfg["取込対象外理由"] = st.column_config.TextColumn("取込対象外理由", width="large")
+    if "メモ" in df.columns:
+        cfg["メモ"] = st.column_config.TextColumn("メモ", width="medium")
     return cfg
 
 
@@ -751,6 +775,24 @@ if format_preset != FORMAT_PAYROLL_HQ:
             else:
                 st.warning(
                     "「振分PL項目」および「出金額」または「入金額」の列が必要です。"
+                )
+
+        if format_preset in _yokohama_presets:
+            ex_only = result[result["分類結果"].astype(str).eq("除外")].copy()
+            st.subheader("取込対象外・除外の一覧")
+            st.caption(
+                "横浜信金のマスタルールで **取込対象外** とした行です。"
+                " 理由列を含めて一覧します（全明細表でも除外として含まれます）。"
+            )
+            if ex_only.empty:
+                st.info("除外の行はありません。")
+            else:
+                ex_disp = _yokohama_excluded_for_display(ex_only)
+                st.dataframe(
+                    ex_disp,
+                    column_config=_result_table_column_config(ex_disp, enex_compact=False),
+                    width="stretch",
+                    hide_index=True,
                 )
 
         st.divider()
