@@ -21,4 +21,6 @@ spec = importlib.util.spec_from_file_location("_halka_streamlit_app", _p)
 if spec is None or spec.loader is None:
     raise RuntimeError(f"Cannot load {_p}")
 mod = importlib.util.module_from_spec(spec)
+# exec 前に登録（dataclass / Py3.14 で cls.__module__ が解決できるように）
+sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)

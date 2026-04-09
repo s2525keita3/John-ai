@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import csv
 import io
 import re
+import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -15,31 +14,17 @@ import streamlit as st
 from report_parser import summarize_report_pdf
 from service_fees import MEDICAL_INSURANCE_FLAT_YEN_PER_VISIT, add_revenue_columns
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from feedback_ui import read_version_line, render_feedback_form
+
+_VERSION_FILE = Path(__file__).resolve().parent / "VERSION"
+
 
 def _read_app_version() -> str:
     """デプロイ確認用（VERSION の先頭行）。"""
-    try:
-        line = (Path(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8").strip().splitlines()
-        return line[0] if line else "?"
-    except OSError:
-        return "?"
-
-
-def _build_feedback_csv_bytes(kind: str, summary: str, detail: str) -> bytes:
-    """Cursor 等に貼り付けやすい1行CSV（ヘッダ付き・UTF-8 BOM）。"""
-    buf = io.StringIO()
-    w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["種別", "概要", "詳細", "アプリ版", "記入日時(ISO)"])
-    w.writerow(
-        [
-            kind,
-            summary or "",
-            detail or "",
-            _read_app_version(),
-            datetime.now(timezone.utc).astimezone().replace(microsecond=0).isoformat(),
-        ]
-    )
-    return buf.getvalue().encode("utf-8-sig")
+    return read_version_line(_VERSION_FILE)
 
 
 # 介護保険の概算売上は「介護」側（10割・高い方）単価のみ（支援按分は UI から廃止）
@@ -685,37 +670,11 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
                 use_container_width=True,
             )
         with dl_fb_col2:
-            st.caption("改善・連絡用（1行CSV。Cursor に貼って依頼できます）")
-            with st.form("visit_report_feedback"):
-                fb_kind = st.selectbox(
-                    "種別",
-                    [
-                        "エラー",
-                        "スタッフ追加",
-                        "項目追加",
-                        "追加指示・要望",
-                        "その他",
-                    ],
-                    index=0,
-                )
-                fb_summary = st.text_input("概要（一行）", placeholder="例: 〇〇列がずれる")
-                fb_detail = st.text_area(
-                    "詳細",
-                    height=100,
-                    placeholder="再現手順・追加したい項目・指示内容など",
-                )
-                fb_submitted = st.form_submit_button("フィードバックCSVを表示・ダウンロード")
-            if fb_submitted:
-                fb_csv = _build_feedback_csv_bytes(fb_kind, fb_summary, fb_detail)
-                st.download_button(
-                    "↓ フィードバックCSVを保存",
-                    data=fb_csv,
-                    file_name="visit_app_feedback.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    key="visit_feedback_dl_after_submit",
-                )
-                st.code(fb_csv.decode("utf-8-sig"), language=None)
+            render_feedback_form(
+                app_label="訪問件数仕分け",
+                version_file=_VERSION_FILE,
+                form_key="visit_report_feedback",
+            )
 
         st.divider()
         st.subheader("ダッシュボード")

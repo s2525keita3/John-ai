@@ -10,6 +10,7 @@ halka_AI — 本部経費処理（**本部経費処理アプリ／JOHN とは独
 """
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -44,6 +45,10 @@ from reconcile_expander_ui import (
 
 _ROOT = Path(__file__).resolve().parent
 _HALKA_MASTER_CSV = _ROOT / "halka_master.csv"
+_REPO_ROOT = _ROOT.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from feedback_ui import read_version_line, render_feedback_form
 
 # halka 向け入力・計上用スプレッドシート
 HALKA_SPREADSHEET_URL = (
@@ -401,6 +406,7 @@ if (
 
 with st.sidebar:
     st.subheader("取引CSVの列名")
+    st.caption(f"アプリ版 **{read_version_line(_ROOT / 'VERSION')}**")
     format_preset = st.selectbox(
         "フォーマット",
         [
@@ -530,6 +536,14 @@ with st.sidebar:
             "halka 既定マスタ（CSV）をダウンロード",
             data=master_dl,
             file_name="halka_master.csv",
+        )
+
+    st.divider()
+    with st.expander("フィードバック（Cursor向けCSV）", expanded=False):
+        render_feedback_form(
+            app_label="halka_AI — 本部経費処理",
+            version_file=_ROOT / "VERSION",
+            form_key="halka_sidebar",
         )
 
 tab1, tab2 = st.tabs(
@@ -896,6 +910,17 @@ with tab1:
         else:
             dl3.caption("要確認・判断不能の行があるときに、社長向けCSVをダウンロードできます。")
 
+        st.divider()
+        _hf_sp, _hf_main = st.columns([1, 2])
+        with _hf_sp:
+            st.caption("フィードバック")
+        with _hf_main:
+            render_feedback_form(
+                app_label="halka_AI — 本部経費処理",
+                version_file=_ROOT / "VERSION",
+                form_key="halka_after_csv",
+            )
+
     else:
         st.info(
             "取引データをアップロードし、上の **「振り分けを実行」** を押してください。"
@@ -983,3 +1008,14 @@ with tab2:
                         )
             except Exception as e:
                 st.error(f"読み込みまたは集計に失敗しました: {e}")
+
+    st.divider()
+    _t2a, _t2b = st.columns([1, 2])
+    with _t2a:
+        st.caption("フィードバック")
+    with _t2b:
+        render_feedback_form(
+            app_label="halka_AI — 支給控除タブ",
+            version_file=_ROOT / "VERSION",
+            form_key="halka_tab2_payroll",
+        )

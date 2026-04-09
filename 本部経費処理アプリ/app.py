@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -46,6 +47,10 @@ from reconcile_expander_ui import (
 )
 
 _ROOT = Path(__file__).resolve().parent
+_REPO_ROOT = _ROOT.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from feedback_ui import read_version_line, render_feedback_form
 
 # 本部経費の計上・入力用スプレッドシート
 HONBU_KEIHI_SPREADSHEET_URL = (
@@ -372,6 +377,7 @@ if "master_work" not in st.session_state:
 enex_master_df: pd.DataFrame | None = None
 with st.sidebar:
     st.subheader("処理モード")
+    st.caption(f"アプリ版 **{read_version_line(_ROOT / 'VERSION')}**")
     format_preset = st.selectbox(
         "フォーマット",
         [
@@ -531,6 +537,14 @@ with st.sidebar:
 
         sample_bytes = (_ROOT / "sample_master.csv").read_bytes()
         st.download_button("サンプルマスタ（CSV）をダウンロード", data=sample_bytes, file_name="sample_master.csv")
+
+    st.divider()
+    with st.expander("フィードバック（Cursor向けCSV）", expanded=False):
+        render_feedback_form(
+            app_label="本部経費処理（MVP）",
+            version_file=_ROOT / "VERSION",
+            form_key="honbu_sidebar",
+        )
 
 # markdown の unsafe HTML は <style> が除去されることがあるため st.html を使う（Streamlit 推奨）
 st.html(HONBU_MAIN_UPLOAD_DROPZONE_CSS)
@@ -1136,6 +1150,17 @@ if format_preset != FORMAT_PAYROLL_HQ:
         else:
             dl3.caption("要確認・判断不能の行があるときに、社長向けCSVをダウンロードできます。")
 
+        st.divider()
+        _fb_sp, _fb_main = st.columns([1, 2])
+        with _fb_sp:
+            st.caption("フィードバック")
+        with _fb_main:
+            render_feedback_form(
+                app_label="本部経費処理（MVP）",
+                version_file=_ROOT / "VERSION",
+                form_key="honbu_after_csv",
+            )
+
     else:
         st.info(
             "取引データをアップロードし、上の **「振り分けを実行」** を押してください。"
@@ -1200,6 +1225,16 @@ else:
                         file_name="本部人件費_支給控除集計.csv",
                         key="dl_payroll",
                     )
+                    st.divider()
+                    _pf_sp, _pf_fb = st.columns([1, 2])
+                    with _pf_sp:
+                        st.caption("フィードバック")
+                    with _pf_fb:
+                        render_feedback_form(
+                            app_label="本部経費処理（MVP）・支給控除",
+                            version_file=_ROOT / "VERSION",
+                            form_key="honbu_payroll",
+                        )
             except Exception as e:
                 st.error(f"読み込みまたは集計に失敗しました: {e}")
 
