@@ -120,8 +120,10 @@ try:
     import altair as alt
 
     _HAS_ALTAIR = True
-except ImportError:
+except Exception:
+    # ImportError に加え、Python 3.14 等で altair 内部の TypedDict が TypeError になる場合がある
     _HAS_ALTAIR = False
+    alt = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)
