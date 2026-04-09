@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Optional
 
 import pandas as pd
@@ -11,6 +12,16 @@ import streamlit as st
 
 from report_parser import summarize_report_pdf
 from service_fees import MEDICAL_INSURANCE_FLAT_YEN_PER_VISIT, add_revenue_columns
+
+
+def _read_app_version() -> str:
+    """デプロイ確認用（VERSION の先頭行）。"""
+    try:
+        line = (Path(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8").strip().splitlines()
+        return line[0] if line else "?"
+    except OSError:
+        return "?"
+
 
 # 介護保険の概算売上は「介護」側（10割・高い方）単価のみ（支援按分は UI から廃止）
 SUPPORT_RATIO_FOR_FEES = 0.0
@@ -510,6 +521,7 @@ def _parse_name_list(text: str) -> set[str]:
 
 
 with st.sidebar:
+    st.caption(f"アプリ版 **{_read_app_version()}**（表示が古いときは Cloud の「Reboot」または再デプロイ）")
     st.subheader("取り込み")
     uploads = st.file_uploader(
         "PDF / CSV / Excel を選択（複数可）",
@@ -543,6 +555,8 @@ with st.sidebar:
             pdf_u = next(u for u in uploads if u.name.lower().endswith(".pdf"))
             pdf_bytes = pdf_u.getvalue()
             st.session_state.report_df = summarize_monthly_visit_hours_from_report_pdf(pdf_bytes)  # type: ignore[attr-defined]
+            # 表の key を変えて Streamlit クライアント側の列ソート状態をリセット（PDF 順に戻す）
+            st.session_state.report_table_key = st.session_state.get("report_table_key", 0) + 1
             st.success("担当別の集計を作成しました")
         else:
             new_rows: list[VisitRow] = []
@@ -555,6 +569,8 @@ with st.sidebar:
         st.session_state.rows = []  # type: ignore[attr-defined]
         if "report_df" in st.session_state:
             del st.session_state["report_df"]
+        if "report_table_key" in st.session_state:
+            del st.session_state["report_table_key"]
 
 
 rows: list[VisitRow] = st.session_state.rows  # type: ignore[assignment]
@@ -568,6 +584,11 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
     else:
         ex = _parse_name_list(exclude_text)
         inc = _parse_name_list(include_text)
+        if "_pdf_order" not in rdf.columns:
+            st.warning(
+                "この集計データには **並び順用の情報（_pdf_order）** がありません。"
+                " コード更新前のセッションの可能性があります。**PDF をもう一度「取り込み実行」** してください。"
+            )
         show = _apply_staff_filter(rdf.copy(), ex, inc)
         show = _sort_report_df_by_pdf_order(show)
         show = add_revenue_columns(show, SUPPORT_RATIO_FOR_FEES)
@@ -599,23 +620,32 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
                 "_pricing_split",
             ]
         show = show.drop(columns=[c for c in drop_cols if c in show.columns])
-        if "他" in show.columns or "記録" in show.columns:
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            if "他" in show.columns or "記録" in show.columns:
+                st.caption(
+                    "列「他」「記録」は帳票サマリーから拾った回数です（"
+                    "**1回あたり60分** として「件数」に含みます）。90 の右隣に並びます。"
+                )
             st.caption(
-                "列「他」「記録」は帳票サマリーから拾った回数です（"
-                "見出しどおり **1回あたり60分** として上の「件数」に含めています）。"
+                "**行の並びは PDF の担当者ブロック先頭順です。** "
+                "表の **列見出しをクリックするとブラウザが並べ替え**（見た目が PDF とずれます）。"
+                "下のボタンか、もう一度「取り込み実行」で PDF 順に戻せます。"
             )
-        st.caption(
-            "行の並びは **PDF の担当者ブロック先頭順** です。"
-            "表の列見出しをクリックするとブラウザ側で並び替えられます。"
-            " PDF 順に戻すには、もう一度「取り込み実行」するかページを再読み込みしてください。"
-        )
+        with c2:
+            if st.button("表をPDF順に戻す", key="reset_visit_report_sort", use_container_width=True):
+                st.session_state.report_table_key = st.session_state.get("report_table_key", 0) + 1
+                st.rerun()
         _cols = list(show.columns)
+        _tbl_key = int(st.session_state.get("report_table_key", 0))
         st.dataframe(
             show,
             use_container_width=True,
             hide_index=True,
+            height=520,
             column_order=_cols,
             column_config=_report_visit_table_column_config(show),
+            key=f"visit_report_{_tbl_key}",
         )
         csv_for_dl = show.rename(
             columns={k: v for k, v in REPORT_SUMMARY_EXTRA_COLUMN_LABELS.items() if k in show.columns}
