@@ -495,7 +495,10 @@ def _render_report_dashboard_section(rdf2: pd.DataFrame) -> None:
     st.caption("上の集計表・ダッシュボードは同一データです。担当の絞り込みはサイドバーの「表示の絞り込み」に連動します。")
 
 
-st.set_page_config(page_title="訪問件数仕分け", layout="wide")
+st.set_page_config(
+    page_title=f"訪問件数仕分け · v{_read_app_version()}",
+    layout="wide",
+)
 st.title("訪問件数仕分け")
 
 st.caption(
