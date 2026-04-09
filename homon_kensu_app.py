@@ -18,4 +18,7 @@ spec = importlib.util.spec_from_file_location("_homon_streamlit_app", _p)
 if spec is None or spec.loader is None:
     raise RuntimeError(f"Cannot load {_p}")
 mod = importlib.util.module_from_spec(spec)
+# exec_module の前に登録しないと、クラス定義時に dataclasses が
+# sys.modules[cls.__module__] を参照できず Py3.14 等で AttributeError になる
+sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)
