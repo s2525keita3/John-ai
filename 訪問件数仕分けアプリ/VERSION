@@ -1,3 +1,3 @@
-1.0.11
+1.0.12
 release-date: 2026-04-09
-label: homon_kensu_app で exec 前に sys.modules 登録（dataclass/Py3.14対策）
+label: 他・記録の表記短縮。集計CSV横にフィードバックCSVフォーム

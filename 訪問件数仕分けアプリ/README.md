@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Ver.1.0.11** · 担当別訪問件数 PDF の集計 · 概算売上 · Streamlit
+**Ver.1.0.12** · 担当別訪問件数 PDF の集計 · 概算売上 · Streamlit
 
 [要件定義](要件定義書.md) · [アーキテクチャ](docs/ARCHITECTURE.md) · [公開URL・共有](docs/DEPLOY.md) · [AGENTS](AGENTS.md) · `VERSION`
 
