@@ -36,6 +36,41 @@ CODE_CATEGORY_DISPLAY_ORDER: list[str] = [
 ]
 
 
+def _sort_report_df_by_pdf_order(df: pd.DataFrame) -> pd.DataFrame:
+    """担当別集計を PDF ブロック先頭位置（_pdf_order）で並べ替え。表示のたびに呼ぶ。"""
+    out = df.copy()
+    if not out.empty and "_pdf_order" in out.columns:
+        out = out.sort_values(
+            ["_pdf_order", "担当者"],
+            ascending=[True, True],
+            kind="mergesort",
+        )
+    return out
+
+
+def _reorder_report_columns_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """他・記録を 90 と 医療の間に置き、横スクロールで見落とされにくくする。"""
+    preferred = [
+        "担当者",
+        "20",
+        "30",
+        "40",
+        "60",
+        "90",
+        "他",
+        "記録",
+        "医療",
+        "医療保険暫定(円)",
+        "同行",
+        "件数",
+        "概算売上(円)",
+        "売上/時間(円/h)",
+    ]
+    head = [c for c in preferred if c in df.columns]
+    tail = [c for c in df.columns if c not in head]
+    return df[head + tail]
+
+
 def _report_visit_table_column_config(df: pd.DataFrame) -> dict:
     """担当別集計表の列表示名。サマリー由来の「他」「記録」を説明付きで見せる。"""
     cfg: dict = {}
@@ -534,9 +569,11 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
         ex = _parse_name_list(exclude_text)
         inc = _parse_name_list(include_text)
         show = _apply_staff_filter(rdf.copy(), ex, inc)
+        show = _sort_report_df_by_pdf_order(show)
         show = add_revenue_columns(show, SUPPORT_RATIO_FOR_FEES)
         show = add_medical_insurance_columns(show)
-        drop_cols = ["_職種"]
+        show = _reorder_report_columns_for_display(show)
+        drop_cols = ["_職種", "_pdf_order"]
         if not show_formula:
             drop_cols += [
                 "_分数合計",
@@ -567,10 +604,17 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
                 "列「他」「記録」は帳票サマリーから拾った回数です（"
                 "見出しどおり **1回あたり60分** として上の「件数」に含めています）。"
             )
+        st.caption(
+            "行の並びは **PDF の担当者ブロック先頭順** です。"
+            "表の列見出しをクリックするとブラウザ側で並び替えられます。"
+            " PDF 順に戻すには、もう一度「取り込み実行」するかページを再読み込みしてください。"
+        )
+        _cols = list(show.columns)
         st.dataframe(
             show,
             use_container_width=True,
             hide_index=True,
+            column_order=_cols,
             column_config=_report_visit_table_column_config(show),
         )
         csv_for_dl = show.rename(
@@ -581,7 +625,7 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
 
         st.divider()
         st.subheader("ダッシュボード")
-        rdf_dash = _apply_staff_filter(rdf.copy(), ex, inc)
+        rdf_dash = _sort_report_df_by_pdf_order(_apply_staff_filter(rdf.copy(), ex, inc))
         _render_report_dashboard_section(rdf_dash)
 
 elif df.empty:

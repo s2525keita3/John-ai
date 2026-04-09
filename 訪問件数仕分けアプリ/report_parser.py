@@ -534,10 +534,11 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
     if not df.empty:
+        # _pdf_order は app 側で再ソート・非表示に使う（Streamlit の列クリック並べ替え後も PDF 順に戻せる）
         df = df.sort_values(
             ["_pdf_order", "担当者"],
             ascending=[True, True],
             kind="mergesort",
-        ).drop(columns=["_pdf_order"])
+        )
     return df
 
