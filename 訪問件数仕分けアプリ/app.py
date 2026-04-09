@@ -183,45 +183,6 @@ def _count同行_from_text(text: str) -> dict[str, int]:
     return counts
 
 
-def _iter_staff_blocks(text: str) -> Iterable[tuple[str, str]]:
-    """
-    「担当者名 利用者名 ...」ヘッダーを区切りとして、担当者単位のテキストブロックを返す。
-    ブロックの先頭データ行から「姓 名」を推定する。
-    """
-    header = "担当者名"
-    chunks = text.split(header)
-    for chunk in chunks[1:]:
-        # 先頭は「 利用者名 ...」等が続くので、最初のデータ行を探す
-        lines = [l for l in chunk.splitlines() if _normalize_text(l)]
-        staff = ""
-        for l in lines:
-            nl = _normalize_text(l)
-            if nl.startswith("利用者名") or nl.startswith("日付") or nl.startswith("No"):
-                continue
-            if nl.startswith("【令和") or nl.startswith("ページ：") or nl.startswith("--"):
-                continue
-            if nl.startswith("副)2回目訪問"):
-                continue
-
-            # 例: "佐々木 勇磨 2 09：30～10：00 訪問看護2 ..."
-            m = re.match(r"^([^\s\d]+)\s+([^\s\d]+)\s+\d{1,2}\s+\d{1,2}：\d{2}", nl)
-            if m:
-                staff = f"{m.group(1)} {m.group(2)}"
-                break
-
-            parts = [p for p in re.split(r"\s+", nl) if p]
-            if len(parts) >= 2:
-                # 数字や「xx回/xx日/xx分」の行を誤認しない
-                if re.fullmatch(r"\d+", parts[0]) or parts[0].endswith(("回", "日", "分")):
-                    continue
-                if re.fullmatch(r"\d+", parts[1]) or parts[1].endswith(("回", "日", "分")):
-                    continue
-                staff = f"{parts[0]} {parts[1]}"
-                break
-        if staff:
-            yield staff, "\n".join(lines)
-
-
 def _extract_medical_count_from_block(block_text: str) -> int:
     """
     サマリー部にある「xx回 / yy回 / xx日 / yy日 / xx分 / yy分」形式から医療回数(yy回)を取る。

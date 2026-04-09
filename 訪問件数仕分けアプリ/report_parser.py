@@ -90,40 +90,82 @@ def _count同行_from_text(text: str) -> dict[str, int]:
     return counts
 
 
-def _iter_staff_blocks(text: str) -> Iterable[tuple[str, str]]:
-    # pdfplumber/pdfminer だと文字化けして「担当者名」が別表記になる場合がある
-    header = "担当者名" if "担当者名" in text else ("�S���Җ�" if "�S���Җ�" in text else "担当者名")
-    chunks = text.split(header)
-    for chunk in chunks[1:]:
-        lines = [l for l in chunk.splitlines() if _normalize_text(l)]
-        staff = ""
-        for l in lines:
-            nl = _normalize_text(l)
-            if nl.startswith(("利用者名", "日付", "No", "【令和", "ページ：", "--", "副)2回目訪問")):
+def _staff_section_header(text: str) -> str:
+    """ブロック区切りに使うヘッダー文字列（文字化け時の代替表記を含む）。"""
+    if "担当者名" in text:
+        return "担当者名"
+    if "�S���Җ�" in text:
+        return "�S���Җ�"
+    return "担当者名"
+
+
+def _header_start_positions(text: str, header: str) -> list[int]:
+    """全文に出現する header の先頭インデックスを、出現順（＝抽出テキストの上→下に近い順）で列挙。"""
+    if not header:
+        return []
+    out: list[int] = []
+    hl = len(header)
+    start = 0
+    while True:
+        p = text.find(header, start)
+        if p < 0:
+            break
+        out.append(p)
+        start = p + hl
+    return out
+
+
+def _first_staff_from_block_lines(lines: list[str]) -> str:
+    """担当ブロック先頭付近の行から「姓 名」を推定する。"""
+    staff = ""
+    for l in lines:
+        nl = _normalize_text(l)
+        if nl.startswith(("利用者名", "日付", "No", "【令和", "ページ：", "--", "副)2回目訪問")):
+            continue
+
+        # 例: "佐々木 勇磨 2 09：30～10：00 訪問看護2 ..."
+        m = re.match(r"^\d+\s+([^\s\d]+)\s+([^\s\d]+)\s+\d{1,2}\s+\d{1,2}[：�F]\d{2}", nl)
+        if m:
+            staff = _canonical_staff_name(f"{m.group(1)} {m.group(2)}")
+            break
+
+        m = re.match(r"^([^\s\d]+)\s+([^\s\d]+)\s+\d{1,2}\s+\d{1,2}[：�F]\d{2}", nl)
+        if m:
+            staff = _canonical_staff_name(f"{m.group(1)} {m.group(2)}")
+            break
+
+        parts = [p for p in re.split(r"\s+", nl) if p]
+        if len(parts) >= 2:
+            if re.fullmatch(r"\d+", parts[0]) or parts[0].endswith(("回", "日", "分")):
                 continue
+            if re.fullmatch(r"\d+", parts[1]) or parts[1].endswith(("回", "日", "分")):
+                continue
+            staff = _canonical_staff_name(f"{parts[0]} {parts[1]}")
+            break
 
-            # 例: "佐々木 勇磨 2 09：30～10：00 訪問看護2 ..."
-            m = re.match(r"^\d+\s+([^\s\d]+)\s+([^\s\d]+)\s+\d{1,2}\s+\d{1,2}[：�F]\d{2}", nl)
-            if m:
-                staff = _canonical_staff_name(f"{m.group(1)} {m.group(2)}")
-                break
+    return staff
 
-            m = re.match(r"^([^\s\d]+)\s+([^\s\d]+)\s+\d{1,2}\s+\d{1,2}[：�F]\d{2}", nl)
-            if m:
-                staff = _canonical_staff_name(f"{m.group(1)} {m.group(2)}")
-                break
 
-            parts = [p for p in re.split(r"\s+", nl) if p]
-            if len(parts) >= 2:
-                if re.fullmatch(r"\d+", parts[0]) or parts[0].endswith(("回", "日", "分")):
-                    continue
-                if re.fullmatch(r"\d+", parts[1]) or parts[1].endswith(("回", "日", "分")):
-                    continue
-                staff = _canonical_staff_name(f"{parts[0]} {parts[1]}")
-                break
+def _iter_staff_blocks(text: str) -> Iterable[tuple[str, str, int]]:
+    """
+    「担当者名」ヘッダーごとにブロックを返す。
+    3要素目は当該ヘッダーが全文に現れる先頭インデックス（並び順＝PDFテキスト流れの上から）。
 
+    ※ str.split ではなく出現位置で区切る。split だと同一担当の繰り返しや空チャンクで順序が崩れることがある。
+    """
+    header = _staff_section_header(text)
+    hl = len(header)
+    positions = _header_start_positions(text, header)
+    if not positions:
+        return
+    for i, hpos in enumerate(positions):
+        cstart = hpos + hl
+        cend = positions[i + 1] if i + 1 < len(positions) else len(text)
+        chunk = text[cstart:cend]
+        lines = [l for l in chunk.splitlines() if _normalize_text(l)]
+        staff = _first_staff_from_block_lines(lines)
         if staff:
-            yield staff, "\n".join(lines)
+            yield staff, "\n".join(lines), hpos
 
 
 def _extract_medical_count_from_block(block_text: str) -> int:
@@ -227,7 +269,7 @@ def extract_medical_visit_events(full_text: str) -> list[MedicalVisitEvent]:
     """PDF全文から「医療」明細行を検出し、日付・利用者・担当を付与する。"""
     out: list[MedicalVisitEvent] = []
     line_no = 0
-    for staff, block in _iter_staff_blocks(full_text):
+    for staff, block, _ in _iter_staff_blocks(full_text):
         for line in block.splitlines():
             line_no += 1
             nl = _normalize_text(line)
@@ -281,7 +323,7 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
     """
     出力列（画像の形式）:
       担当者, 20, 30, 40, 60, 90, 他, 記録, 医療, 同行, 件数
-      「他」「記録」はサマリー（例: 他: 1回）から読み、各1回＝60分として分数に加算する。
+      「他」「記録」は医療サマリー等から読み（例: 他: 0回、記録 2回）、各1回＝60分として分数に加算する。
 
     件数は「分数合計 / 60（時間）」を小数1桁で表示。
     療法士の P40（列「40」）は 0.6時間/回（36分相当）で計算する。
@@ -307,8 +349,9 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
             "p20": _pick_count(r"P20[:：]\s*(\d+)回", t),
             "p40": _pick_count(r"P40[:：]\s*(\d+)回", t),
             "p60": _pick_count(r"P60[:：]\s*(\d+)回", t),
-            "other": _pick_count(r"他[:：]\s*(\d+)回", t),
-            "record": _pick_count(r"記録[:：]\s*(\d+)回", t),
+            # 医療サマリー行は「他: 0回」「記録 2回」のように、記録側はコロン無しで出ることが多い
+            "other": _pick_count(r"他\s*[:：]\s*(\d+)回", t),
+            "record": _pick_count(r"記録\s*[:：]?\s*(\d+)回", t),
         }
 
     def _zero_counts() -> dict[str, int]:
@@ -338,13 +381,11 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
         return _zero_counts(), _extract_summary_counts(t), False
 
     agg: dict[str, dict[str, int]] = {}
-    # PDF 上で「担当者名」ブロックが先に現れた順（上→下）を保持する
+    # PDF 抽出テキスト上で「担当者名」ヘッダーが先に現れた位置（小さいほど上）で並べる
     staff_pdf_order: dict[str, int] = {}
-    _next_pdf_order = 0
-    for staff, block in _iter_staff_blocks(full_text):
+    for staff, block, header_pos in _iter_staff_blocks(full_text):
         if staff not in staff_pdf_order:
-            staff_pdf_order[staff] = _next_pdf_order
-            _next_pdf_order += 1
+            staff_pdf_order[staff] = header_pos
         if staff not in agg:
             agg[staff] = {
                 "vis2_s": 0,
@@ -487,12 +528,16 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
                 "_record_s": int(record_s),
                 "_record_c": int(record_c),
                 "_pricing_split": bool(a.get("split_any")),
-                "_pdf_order": int(staff_pdf_order.get(staff, 0)),
+                "_pdf_order": int(staff_pdf_order.get(staff, 10**9)),
             }
         )
 
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = df.sort_values("_pdf_order", ascending=True).drop(columns=["_pdf_order"])
+        df = df.sort_values(
+            ["_pdf_order", "担当者"],
+            ascending=[True, True],
+            kind="mergesort",
+        ).drop(columns=["_pdf_order"])
     return df
 
