@@ -60,6 +60,7 @@ def estimate_row_revenue_yen(row: pd.Series, support_ratio: float) -> float:
     PDF から _vis2_s/_vis2_c 等があるときは、支援単価×支援件数＋介護単価×介護件数で計算する。
     それ以外（CSV 等）は support_ratio で介護・支援単価をブレンドする従来方式。
     看護は _vis3・列30/90、療法は _p60・列20/40 を使う（列60は表示用のため混同しない）。
+    「他」「記録」は各1回を訪看3（60分）相当として _other_s/_record_s と介護側単価で計上。
     看護師・療法士は両方の積を合算。同行は加算しない。医療は add_revenue_columns 側で件数×暫定単価を加算。
     """
     r = support_ratio
@@ -77,9 +78,13 @@ def estimate_row_revenue_yen(row: pd.Series, support_ratio: float) -> float:
         p20c = _cell_float(row, "_p20_c")
         p40c = _cell_float(row, "_p40_c")
         p60c = _cell_float(row, "_p60_c")
+        os_ = _cell_float(row, "_other_s")
+        oc_ = _cell_float(row, "_other_c")
+        rs_ = _cell_float(row, "_record_s")
+        rc_ = _cell_float(row, "_record_c")
 
         nurse_yen = 0.0
-        if v2s + v3s + v4s + v2c + v3c + v4c > 0:
+        if v2s + v3s + v4s + v2c + v3c + v4c > 0 or os_ + oc_ + rs_ + rc_ > 0:
             nurse_yen = (
                 v2s * SUP_NURSE_I2
                 + v3s * SUP_NURSE_I3
@@ -87,6 +92,10 @@ def estimate_row_revenue_yen(row: pd.Series, support_ratio: float) -> float:
                 + v2c * CARE_NURSE_I2
                 + v3c * CARE_NURSE_I3
                 + v4c * CARE_NURSE_I4
+                + os_ * SUP_NURSE_I3
+                + oc_ * CARE_NURSE_I3
+                + rs_ * SUP_NURSE_I3
+                + rc_ * CARE_NURSE_I3
             )
         pt_yen = 0.0
         if p20s + p40s + p60s + p20c + p40c + p60c > 0:
@@ -120,12 +129,17 @@ def estimate_row_revenue_yen(row: pd.Series, support_ratio: float) -> float:
     else:
         p60 = 0.0
 
+    cnt_other = _cell_float(row, "他")
+    cnt_record = _cell_float(row, "記録")
+
     nurse_yen = 0.0
-    if v2 + v3 + v4 > 0:
+    if v2 + v3 + v4 > 0 or cnt_other + cnt_record > 0:
         nurse_yen = (
             v2 * _blend(CARE_NURSE_I2, SUP_NURSE_I2, r)
             + v3 * _blend(CARE_NURSE_I3, SUP_NURSE_I3, r)
             + v4 * _blend(CARE_NURSE_I4, SUP_NURSE_I4, r)
+            + cnt_other * _blend(CARE_NURSE_I3, SUP_NURSE_I3, r)
+            + cnt_record * _blend(CARE_NURSE_I3, SUP_NURSE_I3, r)
         )
 
     pt_yen = 0.0

@@ -15,6 +15,12 @@ from service_fees import MEDICAL_INSURANCE_FLAT_YEN_PER_VISIT, add_revenue_colum
 # 介護保険の概算売上は「介護」側（10割・高い方）単価のみ（支援按分は UI から廃止）
 SUPPORT_RATIO_FOR_FEES = 0.0
 
+# 集計表・CSV・コード別グラフで共通する表示名（DataFrame の列キーは「他」「記録」のまま）
+REPORT_SUMMARY_EXTRA_COLUMN_LABELS: dict[str, str] = {
+    "他": "他（サマリー・1回=60分）",
+    "記録": "記録（サマリー・1回=60分）",
+}
+
 # コード別グラフ・表の列（区分）の並び
 CODE_CATEGORY_DISPLAY_ORDER: list[str] = [
     "P60",
@@ -23,9 +29,29 @@ CODE_CATEGORY_DISPLAY_ORDER: list[str] = [
     "Ⅰ-2 訪看2",
     "Ⅰ-3 訪看3",
     "Ⅰ-4 訪看4",
+    REPORT_SUMMARY_EXTRA_COLUMN_LABELS["他"],
+    REPORT_SUMMARY_EXTRA_COLUMN_LABELS["記録"],
     "医療（サマリー）",
     "同行(2回目)",
 ]
+
+
+def _report_visit_table_column_config(df: pd.DataFrame) -> dict:
+    """担当別集計表の列表示名。サマリー由来の「他」「記録」を説明付きで見せる。"""
+    cfg: dict = {}
+    if "他" in df.columns:
+        cfg["他"] = st.column_config.NumberColumn(
+            REPORT_SUMMARY_EXTRA_COLUMN_LABELS["他"],
+            help="帳票サマリーの「他: ○回」から読んだ回数。1回＝60分として合計時間（件数）に加算します。",
+            format="%d",
+        )
+    if "記録" in df.columns:
+        cfg["記録"] = st.column_config.NumberColumn(
+            REPORT_SUMMARY_EXTRA_COLUMN_LABELS["記録"],
+            help="帳票サマリーの「記録: ○回」から読んだ回数。1回＝60分として合計時間（件数）に加算します。",
+            format="%d",
+        )
+    return cfg
 
 
 def add_medical_insurance_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -325,6 +351,10 @@ def _code_aggregate_row(df: pd.DataFrame) -> dict[str, int]:
         row["列60（訪看3／P60 未分離）"] = int(df["60"].sum())
     if "90" in df.columns:
         row["Ⅰ-4 訪看4"] = int(df["90"].sum())
+    if "他" in df.columns:
+        row[REPORT_SUMMARY_EXTRA_COLUMN_LABELS["他"]] = int(df["他"].sum())
+    if "記録" in df.columns:
+        row[REPORT_SUMMARY_EXTRA_COLUMN_LABELS["記録"]] = int(df["記録"].sum())
     if "医療" in df.columns:
         row["医療（サマリー）"] = int(df["医療"].sum())
     if "同行" in df.columns:
@@ -564,11 +594,28 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
                 "_p20_c",
                 "_p40_c",
                 "_p60_c",
+                "_other_s",
+                "_other_c",
+                "_record_s",
+                "_record_c",
                 "_pricing_split",
             ]
         show = show.drop(columns=[c for c in drop_cols if c in show.columns])
-        st.dataframe(show, use_container_width=True, hide_index=True)
-        out = show.to_csv(index=False).encode("utf-8-sig")
+        if "他" in show.columns or "記録" in show.columns:
+            st.caption(
+                "列「他」「記録」は帳票サマリーから拾った回数です（"
+                "見出しどおり **1回あたり60分** として上の「件数」に含めています）。"
+            )
+        st.dataframe(
+            show,
+            use_container_width=True,
+            hide_index=True,
+            column_config=_report_visit_table_column_config(show),
+        )
+        csv_for_dl = show.rename(
+            columns={k: v for k, v in REPORT_SUMMARY_EXTRA_COLUMN_LABELS.items() if k in show.columns}
+        )
+        out = csv_for_dl.to_csv(index=False).encode("utf-8-sig")
         st.download_button("集計CSVダウンロード", data=out, file_name="monthly_visit_hours.csv", mime="text/csv")
 
         st.divider()

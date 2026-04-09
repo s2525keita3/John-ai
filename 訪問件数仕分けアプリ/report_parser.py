@@ -280,7 +280,8 @@ def build_medical_insurance_bundle(file_bytes: bytes, report_df: pd.DataFrame | 
 def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
     """
     出力列（画像の形式）:
-      担当者, 20, 30, 40, 60, 90, 医療, 同行, 件数
+      担当者, 20, 30, 40, 60, 90, 他, 記録, 医療, 同行, 件数
+      「他」「記録」はサマリー（例: 他: 1回）から読み、各1回＝60分として分数に加算する。
 
     件数は「分数合計 / 60（時間）」を小数1桁で表示。
     療法士の P40（列「40」）は 0.6時間/回（36分相当）で計算する。
@@ -306,10 +307,12 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
             "p20": _pick_count(r"P20[:：]\s*(\d+)回", t),
             "p40": _pick_count(r"P40[:：]\s*(\d+)回", t),
             "p60": _pick_count(r"P60[:：]\s*(\d+)回", t),
+            "other": _pick_count(r"他[:：]\s*(\d+)回", t),
+            "record": _pick_count(r"記録[:：]\s*(\d+)回", t),
         }
 
     def _zero_counts() -> dict[str, int]:
-        return {k: 0 for k in ("vis2", "vis3", "vis4", "p20", "p40", "p60")}
+        return {k: 0 for k in ("vis2", "vis3", "vis4", "p20", "p40", "p60", "other", "record")}
 
     def _extract_support_care_counts(block_text: str) -> tuple[dict[str, int], dict[str, int], bool]:
         """
@@ -335,7 +338,13 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
         return _zero_counts(), _extract_summary_counts(t), False
 
     agg: dict[str, dict[str, int]] = {}
+    # PDF 上で「担当者名」ブロックが先に現れた順（上→下）を保持する
+    staff_pdf_order: dict[str, int] = {}
+    _next_pdf_order = 0
     for staff, block in _iter_staff_blocks(full_text):
+        if staff not in staff_pdf_order:
+            staff_pdf_order[staff] = _next_pdf_order
+            _next_pdf_order += 1
         if staff not in agg:
             agg[staff] = {
                 "vis2_s": 0,
@@ -353,10 +362,14 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
                 "split_any": False,
                 "medical": 0,
                 "同行": 0,
+                "other_s": 0,
+                "other_c": 0,
+                "record_s": 0,
+                "record_c": 0,
             }
 
         s, c, used_split = _extract_support_care_counts(block)
-        for k in ("vis2", "vis3", "vis4", "p20", "p40", "p60"):
+        for k in ("vis2", "vis3", "vis4", "p20", "p40", "p60", "other", "record"):
             agg[staff][f"{k}_s"] += s[k]
             agg[staff][f"{k}_c"] += c[k]
         agg[staff]["split_any"] = bool(agg[staff]["split_any"] or used_split)
@@ -380,6 +393,10 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
         p20_c = a["p20_c"]
         p40_c = a["p40_c"]
         p60_c = a["p60_c"]
+        other_s = a["other_s"]
+        other_c = a["other_c"]
+        record_s = a["record_s"]
+        record_c = a["record_c"]
 
         vis2 = vis2_s + vis2_c
         vis3 = vis3_s + vis3_c
@@ -387,6 +404,8 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
         p20 = p20_s + p20_c
         p40 = p40_s + p40_c
         p60 = p60_s + p60_c
+        other = other_s + other_c
+        record = record_s + record_c
         medical = a["medical"]
         同行 = max(a.get("同行", 0), 同行_map.get(staff, 0))
 
@@ -399,26 +418,27 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
         has_vis = (vis2 + vis3 + vis4) > 0
         has_pt = (p20 + p40 + p60) > 0
 
+        extra_60 = (other + record) * 60
         if has_vis and has_pt:
             minutes_n = vis2 * 30 + vis3 * 60 + vis4 * 90
             minutes_pt = p20 * 20 + p40 * 36 + p60 * 60
-            minutes = minutes_n + minutes_pt + medical * 60 - 同行 * 60
+            minutes = minutes_n + minutes_pt + medical * 60 - 同行 * 60 + extra_60
             formula = (
                 f"(30*{vis2}+60*{vis3}+90*{vis4})+(20*{p20}+36*{p40}+60*{p60})"
-                f"+60*{medical}-60*{同行}"
+                f"+60*{medical}-60*{同行}+60*{other}+60*{record}"
             )
             role = "看護師・療法士"
         elif has_pt:
-            minutes = p20 * 20 + p40 * 36 + p60 * 60 + medical * 60 - 同行 * 60
-            formula = f"20*{p20}+36*{p40}+60*{p60}+60*{medical}-60*{同行}"
+            minutes = p20 * 20 + p40 * 36 + p60 * 60 + medical * 60 - 同行 * 60 + extra_60
+            formula = f"20*{p20}+36*{p40}+60*{p60}+60*{medical}-60*{同行}+60*{other}+60*{record}"
             role = "療法士"
         elif has_vis:
-            minutes = vis2 * 30 + vis3 * 60 + vis4 * 90 + medical * 60 - 同行 * 60
-            formula = f"30*{vis2}+60*{vis3}+90*{vis4}+60*{medical}-60*{同行}"
+            minutes = vis2 * 30 + vis3 * 60 + vis4 * 90 + medical * 60 - 同行 * 60 + extra_60
+            formula = f"30*{vis2}+60*{vis3}+90*{vis4}+60*{medical}-60*{同行}+60*{other}+60*{record}"
             role = "看護師"
         else:
-            minutes = medical * 60 - 同行 * 60
-            formula = f"60*{medical}-60*{同行}"
+            minutes = medical * 60 - 同行 * 60 + extra_60
+            formula = f"60*{medical}-60*{同行}+60*{other}+60*{record}"
             role = "—"
 
         hours = float(minutes) / 60.0
@@ -440,6 +460,8 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
                 "40": int(c40),
                 "60": int(c60),
                 "90": int(c90),
+                "他": int(other),
+                "記録": int(record),
                 "医療": int(medical),
                 "同行": int(同行),
                 "件数": round(hours, 1),
@@ -460,12 +482,17 @@ def summarize_report_pdf(file_bytes: bytes) -> pd.DataFrame:
                 "_p20_c": int(p20_c),
                 "_p40_c": int(p40_c),
                 "_p60_c": int(p60_c),
+                "_other_s": int(other_s),
+                "_other_c": int(other_c),
+                "_record_s": int(record_s),
+                "_record_c": int(record_c),
                 "_pricing_split": bool(a.get("split_any")),
+                "_pdf_order": int(staff_pdf_order.get(staff, 0)),
             }
         )
 
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = df.sort_values(["_職種", "件数", "担当者"], ascending=[True, False, True])
+        df = df.sort_values("_pdf_order", ascending=True).drop(columns=["_pdf_order"])
     return df
 
