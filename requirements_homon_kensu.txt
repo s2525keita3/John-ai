@@ -1,5 +1,5 @@
-# Streamlit Community Cloud: Advanced settings → Requirements file にこのファイルを指定すること
-# （ルート requirements.txt だけだと pdfplumber 等が入らず、古い挙動になる）
+# Streamlit Community Cloud: Advanced settings → Requirements file にこのファイルを指定してもよい。
+# ルート requirements.txt に同系の依存を統合済みのため、未指定でも訪問件数アプリは動作する想定。
 streamlit>=1.29
 pandas>=2.0
 openpyxl>=3.1,<4
