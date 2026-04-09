@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import csv
 import io
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -23,13 +25,30 @@ def _read_app_version() -> str:
         return "?"
 
 
+def _build_feedback_csv_bytes(kind: str, summary: str, detail: str) -> bytes:
+    """Cursor 等に貼り付けやすい1行CSV（ヘッダ付き・UTF-8 BOM）。"""
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["種別", "概要", "詳細", "アプリ版", "記入日時(ISO)"])
+    w.writerow(
+        [
+            kind,
+            summary or "",
+            detail or "",
+            _read_app_version(),
+            datetime.now(timezone.utc).astimezone().replace(microsecond=0).isoformat(),
+        ]
+    )
+    return buf.getvalue().encode("utf-8-sig")
+
+
 # 介護保険の概算売上は「介護」側（10割・高い方）単価のみ（支援按分は UI から廃止）
 SUPPORT_RATIO_FOR_FEES = 0.0
 
 # 集計表・CSV・コード別グラフで共通する表示名（DataFrame の列キーは「他」「記録」のまま）
 REPORT_SUMMARY_EXTRA_COLUMN_LABELS: dict[str, str] = {
-    "他": "他（サマリー・1回=60分）",
-    "記録": "記録（サマリー・1回=60分）",
+    "他": "他",
+    "記録": "記録",
 }
 
 # コード別グラフ・表の列（区分）の並び
@@ -83,7 +102,7 @@ def _reorder_report_columns_for_display(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _report_visit_table_column_config(df: pd.DataFrame) -> dict:
-    """担当別集計表の列表示名。サマリー由来の「他」「記録」を説明付きで見せる。"""
+    """担当別集計表の列設定。ヘッダは「他」「記録」のまま、補足は help で表示。"""
     cfg: dict = {}
     if "他" in df.columns:
         cfg["他"] = st.column_config.NumberColumn(
@@ -656,7 +675,47 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
             columns={k: v for k, v in REPORT_SUMMARY_EXTRA_COLUMN_LABELS.items() if k in show.columns}
         )
         out = csv_for_dl.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("集計CSVダウンロード", data=out, file_name="monthly_visit_hours.csv", mime="text/csv")
+        dl_fb_col1, dl_fb_col2 = st.columns([1, 2])
+        with dl_fb_col1:
+            st.download_button(
+                "集計CSVダウンロード",
+                data=out,
+                file_name="monthly_visit_hours.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        with dl_fb_col2:
+            st.caption("改善・連絡用（1行CSV。Cursor に貼って依頼できます）")
+            with st.form("visit_report_feedback"):
+                fb_kind = st.selectbox(
+                    "種別",
+                    [
+                        "エラー",
+                        "スタッフ追加",
+                        "項目追加",
+                        "追加指示・要望",
+                        "その他",
+                    ],
+                    index=0,
+                )
+                fb_summary = st.text_input("概要（一行）", placeholder="例: 〇〇列がずれる")
+                fb_detail = st.text_area(
+                    "詳細",
+                    height=100,
+                    placeholder="再現手順・追加したい項目・指示内容など",
+                )
+                fb_submitted = st.form_submit_button("フィードバックCSVを表示・ダウンロード")
+            if fb_submitted:
+                fb_csv = _build_feedback_csv_bytes(fb_kind, fb_summary, fb_detail)
+                st.download_button(
+                    "↓ フィードバックCSVを保存",
+                    data=fb_csv,
+                    file_name="visit_app_feedback.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="visit_feedback_dl_after_submit",
+                )
+                st.code(fb_csv.decode("utf-8-sig"), language=None)
 
         st.divider()
         st.subheader("ダッシュボード")
