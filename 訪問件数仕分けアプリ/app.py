@@ -50,6 +50,11 @@ CODE_CATEGORY_DISPLAY_ORDER: list[str] = [
     "同行(2回目)",
 ]
 
+# 2026年ステーション収支計画（メインから参照用）
+STATION_2026_SPREADSHEET_URL = (
+    "https://docs.google.com/spreadsheets/d/1rPs01xlB1Iv8a8ovRH8eSIDJGvqCa1mn5SLM2SwL71A/edit?usp=sharing"
+)
+
 
 def _sort_report_df_by_pdf_order(df: pd.DataFrame) -> pd.DataFrame:
     """担当別集計を PDF ブロック先頭位置（_pdf_order）で並べ替え。表示のたびに呼ぶ。"""
@@ -510,6 +515,15 @@ st.caption(
     "担当者名は表の左列（担当者名）から読み取ります。"
 )
 
+with st.container(border=True):
+    st.markdown("##### 2026年ステーション収支計画")
+    st.link_button(
+        "2026年ステーション収支計画（スプレッドシート）を開く",
+        STATION_2026_SPREADSHEET_URL,
+        use_container_width=True,
+        type="primary",
+    )
+
 if "rows" not in st.session_state:
     st.session_state.rows = []  # type: ignore[attr-defined]
 
@@ -564,8 +578,6 @@ with st.sidebar:
             pdf_u = next(u for u in uploads if u.name.lower().endswith(".pdf"))
             pdf_bytes = pdf_u.getvalue()
             st.session_state.report_df = summarize_monthly_visit_hours_from_report_pdf(pdf_bytes)  # type: ignore[attr-defined]
-            # 表の key を変えて Streamlit クライアント側の列ソート状態をリセット（PDF 順に戻す）
-            st.session_state.report_table_key = st.session_state.get("report_table_key", 0) + 1
             st.success("担当別の集計を作成しました")
         else:
             new_rows: list[VisitRow] = []
@@ -578,8 +590,6 @@ with st.sidebar:
         st.session_state.rows = []  # type: ignore[attr-defined]
         if "report_df" in st.session_state:
             del st.session_state["report_df"]
-        if "report_table_key" in st.session_state:
-            del st.session_state["report_table_key"]
 
 
 rows: list[VisitRow] = st.session_state.rows  # type: ignore[assignment]
@@ -629,24 +639,7 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
                 "_pricing_split",
             ]
         show = show.drop(columns=[c for c in drop_cols if c in show.columns])
-        c1, c2 = st.columns([4, 1])
-        with c1:
-            if "他" in show.columns or "記録" in show.columns:
-                st.caption(
-                    "列「他」「記録」は帳票サマリーから拾った回数です（"
-                    "**1回あたり60分** として「件数」に含みます）。90 の右隣に並びます。"
-                )
-            st.caption(
-                "**行の並びは PDF の担当者ブロック先頭順です。** "
-                "表の **列見出しをクリックするとブラウザが並べ替え**（見た目が PDF とずれます）。"
-                "下のボタンか、もう一度「取り込み実行」で PDF 順に戻せます。"
-            )
-        with c2:
-            if st.button("表をPDF順に戻す", key="reset_visit_report_sort", use_container_width=True):
-                st.session_state.report_table_key = st.session_state.get("report_table_key", 0) + 1
-                st.rerun()
         _cols = list(show.columns)
-        _tbl_key = int(st.session_state.get("report_table_key", 0))
         st.dataframe(
             show,
             use_container_width=True,
@@ -654,7 +647,7 @@ if "report_df" in st.session_state and isinstance(st.session_state["report_df"],
             height=520,
             column_order=_cols,
             column_config=_report_visit_table_column_config(show),
-            key=f"visit_report_{_tbl_key}",
+            key="visit_report_table",
         )
         csv_for_dl = show.rename(
             columns={k: v for k, v in REPORT_SUMMARY_EXTRA_COLUMN_LABELS.items() if k in show.columns}
