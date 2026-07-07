@@ -4,12 +4,23 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
 import pandas as pd
 
 Classification = Literal["確定", "要確認", "判断不能"]
+
+
+def normalize_for_match(s: str) -> str:
+    """摘要・キーワードの表記揺れを吸収（全半角・大文字小文字・スペース有無）。
+
+    例: 「GOOGLE *CHATGPT」と「GOOGLE*CHATGPT GOOGLE PAYMENT」を一致させる。
+    """
+    s = unicodedata.normalize("NFKC", str(s))
+    s = re.sub(r"\s+", "", s)
+    return s.upper()
 
 
 @dataclass
@@ -96,12 +107,12 @@ def classify_row(
     最初にマッチしたルールで判定（複数マッチ時は表の上から優先）。
     返り値: (分類, PL項目名, マッチしたマスタ行)
     """
-    summary_norm = summary.strip()
+    summary_norm = normalize_for_match(summary)
     candidates: list[MasterRow] = []
     for m in master:
         if source_filter and m.source and m.source != source_filter:
             continue
-        if m.keyword in summary_norm:
+        if normalize_for_match(m.keyword) in summary_norm:
             candidates.append(m)
 
     if not candidates:
