@@ -45,7 +45,6 @@ def filter_aozora_hq_noise(df: pd.DataFrame, summary_col: str = "摘要") -> pd.
         | s.str.contains("イシダミユキ", regex=False)
         | s.str.contains("イシイ", regex=False)
         | s.str.contains("サトウ", regex=False)
-        | s.str.contains("イナミ", regex=False)
         | st.str.startswith("PE ")
         | s.str.contains("ｼﾔｶｲﾎｹﾝﾘﾖｳ", regex=False)
         | (s.str.contains("社会保険", regex=False) & ~s.str.contains("医療保険", regex=False))
