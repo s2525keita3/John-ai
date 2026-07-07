@@ -17,6 +17,8 @@ def filter_aozora_hq_noise(df: pd.DataFrame, summary_col: str = "摘要") -> pd.
     - PE 地方税・税務署（電子納付）
     - 社会保険料（半角ｼﾔｶｲﾎｹﾝﾘﾖｳ等／支給控除）
 
+    医療保険入金（国保連合会・支払基金など）は除外せず「入金」としてマスタ分類する。
+
     オリコ（全角・半角ｵﾘｺ）は filter_exclude_orico で除外。
     """
     if summary_col not in df.columns:
@@ -46,11 +48,7 @@ def filter_aozora_hq_noise(df: pd.DataFrame, summary_col: str = "摘要") -> pd.
         | s.str.contains("イナミ", regex=False)
         | st.str.startswith("PE ")
         | s.str.contains("ｼﾔｶｲﾎｹﾝﾘﾖｳ", regex=False)
-        | s.str.contains("社会保険", regex=False)
-        # 医療保険（国保連合会・支払基金など）：支給控除側で把握する前提で除外
-        | s.str.contains("医療保険", regex=False)
-        | s.str.contains("国保連合会", regex=False)
-        | s.str.contains("診療報酬支払基金", regex=False)
+        | (s.str.contains("社会保険", regex=False) & ~s.str.contains("医療保険", regex=False))
         # 小口補充（ATM出金）は小口入力側で明細化するため除外
         | (s.str.contains("ATM", regex=False) & s.str.contains("ゆうちょ", regex=False))
     )
