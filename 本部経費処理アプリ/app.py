@@ -1111,6 +1111,71 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 key="review_rows_editor",
             )
 
+        # 判断不能をその場でマスタ登録（PLを選んで「追加」→即再分類）
+        _pending = (
+            result[result["分類結果"] == "判断不能"]
+            if "分類結果" in result.columns
+            else pd.DataFrame()
+        )
+        if not _pending.empty:
+            with st.expander(
+                f"⚡ 判断不能をその場でマスタに追加（{_pending['摘要'].nunique()}件）",
+                expanded=True,
+            ):
+                st.caption(
+                    "PL項目を選んで「追加」を押すと、マスタに1行追加してすぐ再分類されます。"
+                    "追加はこのセッション内のみ有効です。次回以降も使う場合は、"
+                    "下の「現在のマスタをダウンロード」で保存し、sample_master.csv を差し替えてください。"
+                )
+                _pl_opts = pl_dropdown_options(bool(st.session_state.get("master_full_pl", False)))
+                for _i, (_sm, _grp) in enumerate(_pending.groupby("摘要", sort=False)):
+                    _amt = pd.to_numeric(_grp.get("出金額"), errors="coerce").fillna(0).abs().sum()
+                    _c1, _c2, _c3 = st.columns([4, 3, 1])
+                    _c1.text_input(
+                        "摘要キーワード",
+                        value=str(_sm).strip(),
+                        key=f"quickadd_kw_{_i}",
+                        label_visibility="collapsed",
+                        help=f"{len(_grp)}件 / 出金合計 {_amt:,.0f}円",
+                    )
+                    _c2.selectbox(
+                        "PL項目",
+                        _pl_opts,
+                        key=f"quickadd_pl_{_i}",
+                        label_visibility="collapsed",
+                    )
+                    _kw = str(st.session_state.get(f"quickadd_kw_{_i}", "")).strip()
+                    _pl = str(st.session_state.get(f"quickadd_pl_{_i}", "（未選択）"))
+                    if _c3.button(
+                        "追加",
+                        key=f"quickadd_btn_{_i}",
+                        disabled=(not _kw or _pl in ("（未選択）", "")),
+                    ):
+                        st.session_state.master_work = pd.concat(
+                            [
+                                st.session_state.master_work,
+                                pd.DataFrame(
+                                    [
+                                        {
+                                            "摘要キーワード": _kw,
+                                            "自社PL勘定項目": _pl,
+                                            "金額下限": "",
+                                            "金額上限": "",
+                                            "データソース区分": "",
+                                        }
+                                    ]
+                                ),
+                            ],
+                            ignore_index=True,
+                        )
+                        st.rerun()
+                st.download_button(
+                    "現在のマスタをダウンロード（sample_master.csv 差し替え用）",
+                    data=st.session_state.master_work.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="sample_master.csv",
+                    key="quickadd_dl_master",
+                )
+
         stamp = datetime.now().strftime("%Y%m%d_%H%M")
         pl_only_df = _dataframe_pl_classified_rows(result)
         csv_full = result.to_csv(index=False).encode("utf-8-sig")
