@@ -4,7 +4,11 @@
 
 人件費(支給額,健康,介護,厚生,子ども)
   = 支給合計
-  + 健康保険料(会社) + 介護保険料(会社) + 厚生年金保険料(会社) + 子ども・子育て拠出金(会社)
+  + 健康保険料(会社) + 介護保険料(会社) + 子ども・子育て支援金(会社)
+  + 厚生年金保険料(会社) + 子ども・子育て拠出金(会社)
+
+※ 子ども・子育て支援金(会社) は2026年4月開始の国の制度。
+   2026年3月以前の一覧表には行が無いため、見つからなくてもエラーにしない。
 """
 from __future__ import annotations
 
@@ -19,9 +23,13 @@ ROW_LABELS = (
     "支給合計",
     "健康保険料(会社)",
     "介護保険料(会社)",
+    "子ども・子育て支援金(会社)",
     "厚生年金保険料(会社)",
     "子ども・子育て拠出金(会社)",
 )
+
+# 旧様式（2026年3月支給以前）に存在しない行。見つからなくてもエラーにせず0円扱い
+OPTIONAL_ROW_LABELS = ("子ども・子育て支援金(会社)",)
 
 RESULT_LABEL = "人件費(支給額,健康,介護,厚生,子ども)"
 
@@ -131,7 +139,7 @@ def aggregate_hq_personnel_cost(
     surnames: tuple[str, ...] = DEFAULT_HQ_SURNAMES,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
-    本部対象者ごとに ROW_LABELS の金額を読み取り、5項目の縦計＝ RESULT_LABEL を付与。
+    本部対象者ごとに ROW_LABELS の金額を読み取り、縦計＝ RESULT_LABEL を付与。
     戻り値: (結果 DataFrame, エラーメッセージ一覧)
     """
     errors: list[str] = []
@@ -139,7 +147,8 @@ def aggregate_hq_personnel_cost(
     for lab in ROW_LABELS:
         ri = _find_row_index(df, lab)
         if ri is None:
-            errors.append(f"行ラベル「{lab}」が見つかりません（1列目の表記を確認してください）")
+            if lab not in OPTIONAL_ROW_LABELS:
+                errors.append(f"行ラベル「{lab}」が見つかりません（1列目の表記を確認してください）")
         else:
             row_idx[lab] = ri
 
