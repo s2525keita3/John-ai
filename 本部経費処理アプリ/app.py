@@ -21,6 +21,17 @@ from classifier import (
 from csv_loader import is_probably_pdf_bytes, read_csv_auto
 from pl_accounts import pl_dropdown_options
 from aozora_filters import detect_station_mismatch, filter_aozora_hq_noise
+from station_accounts import STATION_TO_APP_PL, normalize_account as normalize_station_account
+from station_keihi_sort import (
+    account_summary as station_account_summary,
+    classify as station_classify,
+    keihi_workbook_bytes as station_keihi_workbook_bytes,
+    load_master as load_station_master,
+    pl_paste_block as station_pl_paste_block,
+    read_hq_detail as read_station_hq_detail,
+    split_hq_lump as station_split_hq_lump,
+    standardize as station_standardize,
+)
 from enex_fleet_master import (
     apply_enex_default_card_mapping,
     merge_enex_extract_with_master,
@@ -64,6 +75,11 @@ HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さい�
 FORMAT_PAYROLL_HQ = "支給控除一覧（本部人件費・xlsx／csv）"
 # 店舗モードは「基本: あおぞら + 例外: 手動入力 + 小口」の合算で運用（横浜信金ルールは使わない）
 # ラベル → 店舗名。店舗別のスタッフ給与除外は aozora_filters.filter_aozora_hq_noise が持つ。
+# 店舗科目レイヤー用のキーワードマスタ（店舗ごと）。無い店舗は桜木町のマスタで代用し警告する
+STATION_KEYWORD_MASTER = {
+    "桜木町": "sakuragicho_master.csv",
+}
+
 STATION_MODES = {
     "桜木町（あおぞら＋手動＋小口）": "桜木町",
     "新子安（あおぞら＋手動＋小口）": "新子安",
@@ -638,6 +654,19 @@ if format_preset != FORMAT_PAYROLL_HQ:
             if not st.session_state[_petty_key].empty:
                 st.caption("小口（読み込み結果・先頭）")
                 st.dataframe(st.session_state[_petty_key].head(50), width="stretch", hide_index=True)
+
+            st.divider()
+            st.markdown("##### 本部管理費明細（任意・月末の本部一括振込を分解）")
+            st.caption(
+                "本部 代表口座への一括振込（所得税・市民税・社保・中退共・Softbank・日新火災・エネフリ・本部管理費 など）の内訳。"
+                " 列は **内容・金額**（相殺入金があれば **入金**）。無い月は『要按分』1行のまま出ます。"
+            )
+            hq_detail_file = st.file_uploader(
+                "本部管理費明細（CSV/Excel）",
+                type=["csv", "xlsx", "xlsm"],
+                key=f"station_hq_detail_{station}",
+                label_visibility="collapsed",
+            )
         else:
             st.subheader("読み込み（取引データ）")
             st.caption(
@@ -664,6 +693,8 @@ if format_preset != FORMAT_PAYROLL_HQ:
         raw = tx_file.getvalue() if tx_file is not None else b""
         name = getattr(tx_file, "name", "") or ""
 
+        station_layer: dict | None = None
+        station_raw_bank: pd.DataFrame | None = None
         if station:
             # 店舗モード: あおぞら（任意）＋手動＋小口を合算して振り分け
             parts: list[pd.DataFrame] = []
@@ -700,6 +731,7 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 )
                 if date_col in w.columns:
                     w = w.rename(columns={date_col: "日付"})
+                station_raw_bank = w.copy()  # 店舗科目レイヤー用（給与・PE・ATMも除外しない）
                 if exclude_aozora_hq_noise:
                     w = filter_aozora_hq_noise(w, summary_col="摘要", station=station)
                 if add_src_auto and source_col not in w.columns:
@@ -751,20 +783,27 @@ if format_preset != FORMAT_PAYROLL_HQ:
                     return pd.DataFrame()
                 df = df_raw.copy()
                 colmap: dict[str, str] = {}
+                # 「摘要」と「支払先」が両方ある小口スプシでは列名が重複しないよう、支払先は別列に保つ
+                _has_memo_col = any(str(c).strip() in ("摘要", "内容") for c in df.columns)
                 for c in df.columns:
                     s = str(c).strip()
                     if s in ("日付", "日付（YYYYMMDD など）"):
                         colmap[c] = "日付"
                     elif any(k in s for k in ("スタッフ", "担当", "氏名", "名字")):
                         colmap[c] = "スタッフ"
+                    elif any(k in s for k in ("支払先", "取引先")) and _has_memo_col:
+                        colmap[c] = "支払先"
                     elif any(k in s for k in ("摘要", "内容", "支払先", "取引先")):
                         colmap[c] = "摘要"
-                    elif any(k in s for k in ("出金額", "支出", "支払", "金額（出金）")):
+                    elif s == "出金" or any(k in s for k in ("出金額", "支出", "支払", "金額（出金）")):
                         colmap[c] = "出金額"
-                    elif "入金額" in s:
+                    elif s == "入金" or "入金額" in s:
                         colmap[c] = "入金額"
                     elif "振分PL" in s or "勘定" in s or "PL" == s:
                         colmap[c] = "振分PL項目"
+                    elif s == "科目":
+                        # 小口スプシ（桜木町 小口 など）の科目列＝店舗科目。振分PL項目へ写す
+                        colmap[c] = "店舗科目"
                     elif "メモ" in s or "備考" in s:
                         colmap[c] = "メモ"
                 if colmap:
@@ -774,6 +813,16 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 for c in ("日付", "スタッフ", "摘要", "出金額", "入金額", "振分PL項目", "メモ"):
                     if c not in df.columns:
                         df[c] = ""
+                if "店舗科目" in df.columns:
+                    _acc = df["店舗科目"].fillna("").astype(str).str.strip().map(normalize_station_account)
+                    df["店舗科目"] = _acc
+                    _pl = df["振分PL項目"].fillna("").astype(str).str.strip()
+                    df.loc[_pl.eq(""), "振分PL項目"] = _acc[_pl.eq("")].map(lambda a: STATION_TO_APP_PL.get(a, ""))
+                if "支払先" in df.columns:
+                    # 小口スプシは「支払先」と「摘要」が別列。支払先を摘要の先頭に足して照合しやすくする
+                    _pay = df["支払先"].fillna("").astype(str).str.strip()
+                    df["摘要"] = (_pay + " " + df["摘要"].fillna("").astype(str)).str.strip()
+                    df = df.drop(columns=["支払先"])
 
                 # 金額は数値化（空は0）
                 df["出金額"] = pd.to_numeric(df["出金額"], errors="coerce").fillna(0)
@@ -785,7 +834,10 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 mask = df["摘要"].astype(str).str.strip().ne("") & (
                     (df["出金額"].abs() > 0) | (df["入金額"].abs() > 0)
                 )
-                return df.loc[mask, ("日付", "スタッフ", "摘要", "出金額", "入金額", "振分PL項目", "メモ")].copy()
+                keep_cols = ["日付", "スタッフ", "摘要", "出金額", "入金額", "振分PL項目", "メモ"]
+                if "店舗科目" in df.columns:
+                    keep_cols.append("店舗科目")
+                return df.loc[mask, keep_cols].copy()
 
             man = _manual_block_to_rows(
                 st.session_state.get(f"station_manual_df_{station}"), f"手動（{station}）"
@@ -827,6 +879,35 @@ if format_preset != FORMAT_PAYROLL_HQ:
             # スタッフ（名字）別にも見えるよう、空でなければ整形して持つ
             if "スタッフ" in result.columns:
                 result["スタッフ"] = result["スタッフ"].fillna("").astype(str).map(_extract_surname)
+
+            # ---- 店舗科目レイヤー（経費Excel／収支計画スプシ「○：収支」と同じ語彙で仕分け） ----
+            try:
+                _mpath = _ROOT / STATION_KEYWORD_MASTER.get(station, "sakuragicho_master.csv")
+                _station_rules = load_station_master(_mpath)
+                _warns: list[str] = []
+                if station not in STATION_KEYWORD_MASTER:
+                    _warns.append(f"{station} 専用のキーワードマスタが無いため、桜木町のマスタで仕分けしています（要確認が増えます）。")
+                _sb = None
+                if station_raw_bank is not None and not station_raw_bank.empty:
+                    _b = station_raw_bank.rename(columns={"出金額": "出金", "入金額": "入金"})
+                    _b = station_standardize(_b)
+                    _b["科目"] = ""
+                    _sb = station_classify(_b, _station_rules, "銀行")
+                    if hq_detail_file is not None:
+                        try:
+                            _det = read_station_hq_detail(io.BytesIO(hq_detail_file.getvalue()) if not hq_detail_file.name.lower().endswith((".xlsx", ".xlsm")) else hq_detail_file)
+                            _sb, _w2 = station_split_hq_lump(_sb, _det, _station_rules)
+                            _warns.extend(_w2)
+                        except Exception as e:  # noqa: BLE001
+                            _warns.append(f"本部管理費明細の読み込みに失敗: {e}")
+                _sp = None
+                if isinstance(pet_raw, pd.DataFrame) and not pet_raw.empty:
+                    _p = station_standardize(pet_raw)
+                    _sp = station_classify(_p, _station_rules, "小口")
+                station_layer = {"bank": _sb, "petty": _sp, "warns": _warns}
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"店舗科目レイヤーの計算に失敗しました（従来の結果は表示します）: {e}")
+                station_layer = None
         elif format_preset == "エネクスフリート（請求書PDF・本部カード0001〜0004）":
             if not name.lower().endswith(".pdf"):
                 st.error("このプリセットは **PDF** を選んでください（エネクスフリート請求書）。")
@@ -1061,6 +1142,61 @@ if format_preset != FORMAT_PAYROLL_HQ:
                     "「振分PL項目」および「出金額」または「入金額」の列が必要です。"
                 )
 
+        if station and station_layer is not None:
+            st.divider()
+            st.subheader(f"{station}：経費Excel形式（店舗科目×銀行／小口）")
+            st.caption(
+                "経費Excel「YY.MM」シートと同じ科目で仕分けした結果です。給与・社保・市民税・本部管理費も除外せず店舗科目を付け、"
+                " PL行（収支計画スプシ「○：収支」）への読み替えまで行います。人件費・賞与は支給控除一覧が正（ここは参考値）。"
+            )
+            for _m in station_layer["warns"]:
+                st.info(_m)
+            _sb, _sp = station_layer["bank"], station_layer["petty"]
+            _stat = pd.concat([d["判定"] for d in (_sb, _sp) if d is not None]).value_counts() if (_sb is not None or _sp is not None) else pd.Series(dtype=int)
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("確定・入力済", int(_stat.get("確定", 0) + _stat.get("入力済", 0)))
+            k2.metric("要確認", int(_stat.get("要確認", 0)))
+            k3.metric("判断不能", int(_stat.get("判断不能", 0)))
+            k4.metric("要按分（本部一括）", int(_stat.get("要按分", 0)))
+            t1, t2, t3 = st.tabs(["科目サマリ（R〜U列）", "PL行（○：収支 貼り付け用）", "要確認・判断不能"])
+            with t1:
+                st.dataframe(station_account_summary(_sb, _sp), width="stretch", hide_index=True)
+            with t2:
+                _blk = station_pl_paste_block(_sb, _sp)
+                st.dataframe(_blk[["PL行", "金額", "備考"]], width="stretch", hide_index=True)
+                st.caption("「セルメモ」列（CSV）には、そのPL行に積んだ明細の一覧が入ります。収支タブのセルメモに貼ると従来と同じ根拠が残ります。")
+                st.download_button(
+                    "PL行＋セルメモ（CSV）",
+                    data=_blk.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"{station}_収支タブ貼り付け_{stamp}.csv",
+                )
+            with t3:
+                _pend = pd.concat(
+                    [d[d["判定"].isin(("要確認", "判断不能", "要按分"))] for d in (_sb, _sp) if d is not None],
+                    ignore_index=True,
+                ) if (_sb is not None or _sp is not None) else pd.DataFrame()
+                if _pend.empty:
+                    st.info("要確認・判断不能の行はありません。")
+                else:
+                    st.dataframe(
+                        _pend[["ソース", "日付", "支払先", "摘要", "入金", "出金", "店舗科目", "PL行", "判定", "根拠"]],
+                        width="stretch", hide_index=True,
+                    )
+            _ym = datetime.now().strftime("%y.%m")
+            _all_rows = pd.concat([d for d in (_sb, _sp) if d is not None], ignore_index=True) if (_sb is not None or _sp is not None) else pd.DataFrame()
+            d1, d2 = st.columns(2)
+            d1.download_button(
+                "経費Excel 月次シート（xlsx・A〜G銀行／I〜P小口／R〜Uサマリ）",
+                data=station_keihi_workbook_bytes(_sb, _sp, _ym, station=station),
+                file_name=f"{station}_経費_{_ym}_{stamp}.xlsx",
+                help="サマリは SUMIFS 数式で全行を参照します。要確認行は色付き。",
+            )
+            d2.download_button(
+                "店舗科目 仕分け全行（CSV）",
+                data=_all_rows.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"{station}_店舗科目仕分け_{stamp}.csv",
+            )
+
         if station and "スタッフ" in result.columns:
             staff = result["スタッフ"].fillna("").astype(str).str.strip()
             if staff.ne("").any() and "振分PL項目" in result.columns:
@@ -1070,7 +1206,7 @@ if format_preset != FORMAT_PAYROLL_HQ:
                 tmp["_出金"] = pd.to_numeric(tmp.get("出金額"), errors="coerce").fillna(0).abs()
                 tmp["_入金"] = pd.to_numeric(tmp.get("入金額"), errors="coerce").fillna(0).abs()
                 g = (
-                    tmp.groupby(("スタッフ", "振分PL項目"), dropna=False)
+                    tmp.groupby(["スタッフ", "振分PL項目"], dropna=False)
                     .agg({"_出金": "sum", "_入金": "sum"})
                     .reset_index()
                 )
