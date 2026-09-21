@@ -146,8 +146,12 @@ def detect_station_mismatch(summaries: pd.Series, station: str) -> str | None:
     return None
 
 
-def _staff_salary_mask(summaries: pd.Series, station: str) -> pd.Series:
-    """店舗スタッフへの給与振込らしき行の True マスク。"""
+def _staff_salary_mask(summaries: pd.Series, station: str | None) -> pd.Series:
+    """店舗スタッフへの給与振込らしき行の True マスク。station=None（本部）は常に False。"""
+    if station is None:
+        # 本部口座には店舗スタッフの給与振込は出ない。桜木町の姓カナ部分一致を当てると
+        # 「ナカムラ」（動画編集代行＝支払報酬）のような外注先まで黙って消えるため、当てない。
+        return pd.Series(False, index=summaries.index)
     if station == "桜木町":
         s = summaries.fillna("").astype(str)
         mask = pd.Series(False, index=s.index)
@@ -163,7 +167,7 @@ def _staff_salary_mask(summaries: pd.Series, station: str) -> pd.Series:
 
 
 def filter_aozora_hq_noise(
-    df: pd.DataFrame, summary_col: str = "摘要", station: str = "桜木町"
+    df: pd.DataFrame, summary_col: str = "摘要", station: str | None = None
 ) -> pd.DataFrame:
     """
     資金移動・支給控除と二重になる支出・エネフリで別途見る決済などを除外。
@@ -177,9 +181,10 @@ def filter_aozora_hq_noise(
     - 社会保険料（半角ｼﾔｶｲﾎｹﾝﾘﾖｳ等／支給控除）
     - ATM 出入金・手数料（小口補充・現金移動。小口入力側で明細化する）
 
-    店舗別:
+    店舗別（station を明示したときだけ）:
     - station のスタッフへの給与振込（支給控除側で把握するため除外。
       桜木町=姓カナ、白根・新子安・さいわい=名簿と実CSVで裏取りしたフルネーム）
+    - station=None（本部モード）では店舗スタッフ名義の除外はしない。
 
     医療保険入金（国保連合会・支払基金など）は除外せず「入金」としてマスタ分類する。
     オリコ（全角・半角ｵﾘｺ）は filter_exclude_orico で除外。
