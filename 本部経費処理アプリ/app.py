@@ -73,6 +73,7 @@ HONBU_KEIHI_SPREADSHEET_URL = (
 HQ_PERSONNEL_KEYWORDS = ("本部", "桜木町", "新子安", "白根", "さいわい")
 # 左サイドバーで選ぶとメインに支給控除・本部人件費の画面だけを出す（タブ切替なし）
 FORMAT_PAYROLL_HQ = "支給控除一覧（本部人件費・xlsx／csv）"
+FORMAT_EXPENSE_HUB = "本部経費ハブ（アメックス×PLセルメモ照合）"
 # 店舗モードは「基本: あおぞら + 例外: 手動入力 + 小口」の合算で運用（横浜信金ルールは使わない）
 # ラベル → 店舗名。店舗別のスタッフ給与除外は aozora_filters.filter_aozora_hq_noise が持つ。
 # 店舗科目レイヤー用のキーワードマスタ（店舗ごと）。無い店舗は桜木町のマスタで代用し警告する
@@ -410,6 +411,7 @@ with st.sidebar:
             "エネクスフリート（請求書PDF・本部カード0001〜0004）",
             *STATION_MODES,
             FORMAT_PAYROLL_HQ,
+            FORMAT_EXPENSE_HUB,
         ],
         key="format_preset",
     )
@@ -472,7 +474,7 @@ with st.sidebar:
         summary_col = "摘要"
         in_col = "入金金額"
         out_col = "出金金額"
-    elif format_preset == FORMAT_PAYROLL_HQ:
+    elif format_preset in (FORMAT_PAYROLL_HQ, FORMAT_EXPENSE_HUB):
         date_col = ""
         summary_col = ""
         in_col = ""
@@ -572,6 +574,12 @@ with st.sidebar:
         )
 
 # markdown の unsafe HTML は <style> が除去されることがあるため st.html を使う（Streamlit 推奨）
+if format_preset == FORMAT_EXPENSE_HUB:
+    from expense_hub.ui import render as render_expense_hub
+
+    render_expense_hub()
+    st.stop()
+
 st.html(HONBU_MAIN_UPLOAD_DROPZONE_CSS)
 
 if format_preset != FORMAT_PAYROLL_HQ:

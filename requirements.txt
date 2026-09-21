@@ -9,3 +9,6 @@ pymupdf>=1.23.0,<1.28.0
 pypdfium2>=4.0,<6.0
 altair>=5.0,<6.0
 pytesseract>=0.3.10
+# 本部経費ハブ：収支計画スプシの読み取り（Sheets API・読み取り専用）
+google-api-python-client>=2.100
+google-auth>=2.23

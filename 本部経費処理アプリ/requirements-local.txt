@@ -6,3 +6,6 @@ pymupdf>=1.24
 pytesseract>=0.3.10
 Pillow>=10.0
 # 本体は別途: winget install UB-Mannheim.TesseractOCR  （日本語 jpn はインストーラに同梱）
+# 本部経費ハブ：収支計画スプシの読み取り（Sheets API・読み取り専用）
+google-api-python-client>=2.100
+google-auth>=2.23
