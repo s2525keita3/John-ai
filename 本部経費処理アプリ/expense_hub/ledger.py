@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE TABLE IF NOT EXISTS pl_backups (
   at TEXT, month TEXT, path TEXT, reason TEXT
 );
+CREATE TABLE IF NOT EXISTS pl_writes (
+  at TEXT, actor TEXT, record_id TEXT, sheet TEXT, cell TEXT,
+  old_value REAL, new_value REAL, note_line TEXT, ok INTEGER, message TEXT
+);
 """
 
 
@@ -90,3 +94,13 @@ class Ledger:
         with self.lock, self.db:
             self.db.execute("INSERT INTO pl_backups VALUES (?,?,?,?)", (stamp, month, str(p), reason))
         return p
+
+    def log_write(self, actor: str, result) -> None:
+        """PLへの書き込み1件（要件定義 §12-6：反映セル・旧値・新値・担当者・日時）。"""
+        c = result.change
+        with self.lock, self.db:
+            self.db.execute(
+                "INSERT INTO pl_writes VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (result.at, actor, c.record_id, c.sheet, c.cell, c.old_value, c.new_value, c.note_line,
+                 int(result.ok), result.message),
+            )

@@ -1,8 +1,9 @@
 """
 本部経費ハブの画面（要件定義 §5）。app.py のフォーマット選択から呼ばれる。
   ① 取込（Amex CSV × PL）→ ② ダッシュボード → ③ 明細一覧 → ④ 確認（要確認だけ）
-  → ⑤ 承認前バックアップ → ⑥ PL反映候補（CSV）
-PLへの書き込みはしない（Phase 1）。差異は人が確認するまで確定しない。
+  → ⑤ 承認前バックアップ → ⑥ PLへ反映（承認した行だけ・pl_writer）
+  別タブ：PL点検（pl_check・反映前チェック）
+差異は人が確認するまで確定しない。書き込みは承認済みの行だけ（バックアップ・確認チェック後）。
 """
 from __future__ import annotations
 
@@ -16,8 +17,10 @@ import streamlit as st
 from .ledger import Ledger
 from .models import PlMatch, Status
 from .pipeline import EXPORT_COLS, allocation_text, pl_sheets, run, summarize, to_csv
-from .pl_notes import DEFAULT_SHEET
+from .pl_check import check_pl, latest_month
+from .pl_notes import DEFAULT_SHEET, month_columns
 from .pl_source import Grid, grids_from_sheets, grids_from_xlsx
+from .pl_writer import apply_changes, plan_changes
 
 MONTHS = [f"{m}月" for m in range(1, 13)]
 ACTIONS = ("承認", "修正", "保留", "除外")
@@ -56,7 +59,7 @@ def _load_pl(sheet: str) -> dict[str, Grid] | None:
     sa = _sa_info()
     if sa:
         c1, c2 = st.columns([3, 1])
-        c1.success(f"収支計画スプシに直結中（読み取り専用）｜タブ「{sheet}」", icon="🔗")
+        c1.success(f"収支計画スプシに直結中｜タブ「{sheet}」（読むのは読み取り専用。書くのは⑥で承認した行だけ）", icon="🔗")
         if c2.button("最新を読み直す", width="stretch"):
             _grids_from_sheets.clear()
             st.session_state.pop("hub_key", None)
@@ -96,8 +99,8 @@ def _effective_status(r) -> str:
 
 
 def render() -> None:
-    st.subheader("本部経費ハブ — 原本 × PLセルメモ照合（Phase 1：アメックス）")
-    st.caption("原本取込 → 自動整形 → 重複検出 → PLセルメモ照合 → 差異確認 → 承認 → バックアップ → PL反映候補")
+    st.subheader("本部経費ハブ")
+    st.caption("原本取込 → 自動整形 → 重複検出 → PLセルメモ照合 → 差異確認 → 承認 → バックアップ → PL反映｜手順の正本＝ルールブック §10")
 
     c1, c2, c3 = st.columns([2, 1, 2])
     c1.selectbox("対象法人", ["株式会社ジョン"], key="hub_corp")
@@ -106,9 +109,52 @@ def render() -> None:
     sheet = c3.text_input("PLのタブ", DEFAULT_SHEET, key="hub_sheet")
 
     grids = _load_pl(sheet)
-    src = st.file_uploader("① 原本：アメックス ご利用明細CSV（activity.csv）", type=["csv"], key="hub_src")
-    if grids is None or src is None:
-        st.stop()
+    if grids is None:
+        return
+    t1, t2 = st.tabs(["① アメックス照合", "② PL点検（反映前チェック）"])
+    with t1:
+        _render_amex(grids, month, sheet)
+    with t2:
+        _render_check(grids, month)
+
+
+CHECK_MEANING = {
+    "A セル＝メモ合計": "セルの金額とメモの合計が合わない → メモを直す",
+    "B メモの形": "金額のない行・残高列が残った行 → アプリの出力を貼り直す",
+    "C 付け替え": "付け替え5点の抜け → 本部管理費明細を確認",
+    "D 本部分だけ": "本部タブに請求の総額（店舗分を含む）",
+    "E 按分": "本部経費の按分率と人数が合わない",
+    "F 本部経費の参照": "店舗の本部経費が本部タブを参照していない",
+}
+
+
+def _render_check(grids: dict[str, Grid], month: str) -> None:
+    st.markdown("収支計画スプシの **本部＋4店舗** を読み、ルールブック §10 ⑤ の反映前チェックをまとめて行います（読むだけ・書き込みません）。")
+    latest = latest_month(grids)
+    if latest and latest != month:
+        st.caption(f"按分（行名の人数・率）の点検は最新月（{latest}）だけで行います。")
+    findings = check_pl(grids, month)
+    must = [f for f in findings if f.level == "要対応"]
+    m = st.columns(3)
+    m[0].metric("要対応", f"{len(must)}件")
+    m[1].metric("注意", f"{len(findings) - len(must)}件")
+    m[2].metric("点検した月", month)
+    if not findings:
+        st.success("すべて○です。⑥ 3シート転記に進めます。")
+        return
+    df = pd.DataFrame([
+        {"区分": f.level, "点検": f.check, "意味": CHECK_MEANING.get(f.check, ""), "部門": f.dept, "セル": f.cell, "内容": f.detail}
+        for f in findings
+    ])
+    st.dataframe(df, hide_index=True, width="stretch")
+    st.download_button("点検結果をCSVでダウンロード", df.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"PL点検_{month}.csv", mime="text/csv")
+
+
+def _render_amex(grids: dict[str, Grid], month: str, sheet: str) -> None:
+    src = st.file_uploader("原本：アメックス ご利用明細CSV（activity.csv）", type=["csv"], key="hub_src")
+    if src is None:
+        return
     grid = grids[sheet]
     missing = [t for t in pl_sheets(sheet) if t not in grids]
     if missing:
@@ -121,10 +167,12 @@ def render() -> None:
             res = run(src.getvalue(), src.name, grids, month, sheet, ledger=ledger)
         except ValueError as e:
             st.error(str(e))
-            st.stop()
+            return
         st.session_state.hub_key = key
         st.session_state.hub_res = res
         st.session_state.hub_decisions = {}
+        for k in ("hub_backup", "hub_write_results", "hub_targets"):
+            st.session_state.pop(k, None)
     res = st.session_state.hub_res
 
     if res.duplicate_of:
@@ -246,14 +294,43 @@ def _rc(coord: str) -> tuple[int, int]:
 
 
 def _post_candidates(res, grid: Grid, month: str, ledger: Ledger) -> None:
-    st.markdown("#### ⑤ 承認前バックアップ → ⑥ PL反映候補")
+    st.markdown("#### ⑤ 承認前バックアップ → ⑥ PLへ反映")
     approved = [r for r in res.records if _dec().get(r.id, {}).get("action") in ("承認", "修正")]
     if not approved:
-        st.caption("要確認を「承認」または「修正」にすると、ここにPL反映候補が出ます。")
+        st.caption("要確認を「承認」または「修正」にすると、ここにPL反映の案が出ます。")
         return
+
+    # PL未反映の行は、入れる行（科目）を人が選ぶ
+    targets = st.session_state.setdefault("hub_targets", {})
+    hq_col = month_columns(grid).get(month)
+    rows_by_label = {str(grid.value(r, 2)).strip(): r for r in range(4, 26) if grid.value(r, 2)}
+    for r in approved:
+        if r.pl_note_match_status == PlMatch.NOT_IN_PL and hq_col:
+            label = st.selectbox(
+                f"反映先の行：{r.transaction_date}｜{r.vendor_raw.strip()[:24]}｜{r.amount:,}円",
+                ["（選ぶ）"] + list(rows_by_label), key=f"tgt_{r.id}",
+            )
+            if label == "（選ぶ）":
+                targets.pop(r.id, None)
+            else:
+                targets[r.id] = Grid.coord(rows_by_label[label], hq_col)
+                r.expense_category = label
+
+    changes = plan_changes(approved, _dec(), grid, targets)
+    if not changes:
+        st.info("書き込む対象がありません（計上月差は数字を動かさない／PL未反映は反映先の行を選ぶ）。")
+        return
+    df = pd.DataFrame([{
+        "PLセル": c.cell, "旧値": c.old_value, "増減": c.delta, "新値": c.new_value,
+        "メモに追記する行": c.note_line.replace("\t", "｜"), "理由": c.reason, "書けない理由": c.blocked,
+    } for c in changes])
+    st.dataframe(df, hide_index=True, width="stretch")
+    st.download_button("反映案をCSVでダウンロード", df.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"PL反映案_{month}.csv", mime="text/csv")
+
     bk = st.session_state.get("hub_backup")
     if not bk:
-        if st.button("PLのバックアップを作成（反映候補を出す前に必須）", type="primary"):
+        if st.button("PLのバックアップを作成（書き込みの前に必須）", type="primary"):
             data = grid.to_xlsx()
             p = ledger.backup_pl(data, month, LEDGER_PATH.parent / "backup")
             st.session_state.hub_backup = {"path": str(p), "data": data}
@@ -262,29 +339,26 @@ def _post_candidates(res, grid: Grid, month: str, ledger: Ledger) -> None:
     st.success(f"バックアップ作成済み：{Path(bk['path']).name}")
     st.download_button("バックアップ（xlsx）をダウンロード", bk["data"], file_name=Path(bk["path"]).name)
 
-    rows = []
-    for r in approved:
-        if not r.pl_cell:
-            continue
-        rr, cc = _rc(r.pl_cell)
-        old = grid.value(rr, cc)
-        delta = r.amount - (r.pl_amount or 0) if r.pl_note_match_status == PlMatch.AMOUNT_DIFF else r.amount
-        new = old + delta if isinstance(old, (int, float)) else None
-        line = f"{r.transaction_date:%y/%m/%d}\t{r.expense_category}\t{r.vendor_raw.strip()}\t\t\t{r.amount:,}"
-        rows.append({
-            "PLセル": r.pl_cell, "科目": r.expense_category, "旧値": old, "増減": delta, "新値": new,
-            "メモ差し替え（旧）": f"{r.pl_amount:,}" if r.pl_amount is not None else "",
-            "メモ追記（新）": line, "承認者": _dec()[r.id]["reviewer"], "承認日時": _dec()[r.id]["at"],
-        })
-    if not rows:
-        st.info("承認済みの行に反映先のPLセルがありません（PL未反映候補は、科目を決めてから反映先を選ぶ機能を次段で追加）。")
+    done = st.session_state.get("hub_write_results")
+    if done:
+        st.markdown("**書き込み結果**")
+        st.dataframe(pd.DataFrame(done), hide_index=True, width="stretch")
+        st.caption("書いた内容は台帳（pl_writes）に、セル・旧値・新値・担当者・日時つきで残しています。")
         return
-    df = pd.DataFrame(rows)
-    st.dataframe(df, hide_index=True, width="stretch")
-    st.caption("Phase 1 ではPLへ自動で書き込みません。この表（旧値・新値・メモ）を見て手で反映してください。")
-    st.download_button(
-        "PL反映候補をCSVでダウンロード",
-        df.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"PL反映候補_{month}.csv",
-        mime="text/csv",
-    )
+
+    sa = _sa_info()
+    if not sa or grid.origin != "sheets":
+        st.caption("PLへの書き込みはスプシ直結のときだけ使えます（xlsx読み込みのときは反映案CSVを見て手で反映）。")
+        return
+    ok = st.checkbox("旧値・新値・追記するメモを確認した（書くのは上の表の行だけ。既存のメモは消さない）", key="hub_confirm")
+    if st.button("PLに反映する", type="primary", disabled=not ok):
+        actor = st.session_state.get("hub_reviewer", "")
+        results = apply_changes(sa, changes)
+        for x in results:
+            ledger.log_write(actor, x)
+        st.session_state.hub_write_results = [
+            {"PLセル": x.change.cell, "結果": "OK" if x.ok else "書かなかった", "内容": x.message, "読み直した値": x.after_value}
+            for x in results
+        ]
+        _grids_from_sheets.clear()
+        st.rerun()
