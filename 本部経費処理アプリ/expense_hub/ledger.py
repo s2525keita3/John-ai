@@ -181,9 +181,10 @@ class SheetsLedger:
             if prev:
                 raise DuplicateImport(f"同じ原本は取込済み（{prev['filename']}／{prev['imported_at']}）。二重計上を防ぐため再取込しません")
             now = datetime.now().isoformat(timespec="seconds")
-            # 先に取込記録を書く＝途中で落ちても二重取込にはならない（records が欠けたら画面で再照合）
-            self._append("import_batches", [[file_hash, source_type, filename, len(records), now]])
+            # 明細を先に書き、取込記録（二重取込の鍵）は最後に書く。途中で落ちたら鍵が無いので
+            # もう一度取り込める。明細は id で引く追記型なので、やり直しで二重に数えることはない
             self._upsert(records, month, now)
+            self._append("import_batches", [[file_hash, source_type, filename, len(records), now]])
 
     def _upsert(self, records: list[ExpenseRecord], month: str, now: str) -> None:
         recs, logs = [], []
