@@ -1032,7 +1032,7 @@ if format_preset != FORMAT_PAYROLL_HQ:
             work = filter_amex_hq_noise(work, summary_col="摘要", out_col="出金額")
 
         if exclude_aozora_hq_noise and format_preset == "あおぞらネット銀行（法人口座・標準CSV）":
-            work = filter_aozora_hq_noise(work, summary_col="摘要")
+            work = filter_aozora_hq_noise(work, summary_col="摘要", station=station)
 
         if station is None and add_src_auto and source_col not in work.columns:
             if format_preset == "あおぞらネット銀行（法人口座・標準CSV）":
