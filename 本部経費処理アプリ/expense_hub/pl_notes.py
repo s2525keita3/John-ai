@@ -33,17 +33,32 @@ def _parse_date(s: str, default_year: int) -> date | None:
         return None
 
 
+def _num(f: str) -> int | None:
+    """「1,234」「1,234円」「 1,234 」を数値に。数値でなければ None。"""
+    t = f.strip().replace("円", "").replace("¥", "").strip()
+    return int(t.replace(",", "")) if _NUM.match(t) else None
+
+
 def _parse_line(text: str, default_year: int) -> tuple[date | None, str, str, str, int | None]:
+    """
+    メモ1行 → (日付, 科目, 相手先, 内容, 金額)。
+    金額は「内容のあとに出てくる最初の数字」。銀行明細を貼った行は右端に残高が付くことがあるため
+    （例：…｜175,000｜1,920,051）、右端の数字を金額にしてはいけない。
+    """
     fields = [f.strip() for f in text.split("\t")]
-    nums = [f for f in fields if _NUM.match(f)]
-    amount = int(nums[-1].replace(",", "")) if nums else None
+    nums = [n for n in (_num(f) for f in fields[1:]) if n is not None]
+    amount = nums[0] if nums else None
     d = _parse_date(fields[0], default_year) if fields else None
     if d is None:
-        # 「支払手数料　814」のような自由記述：末尾の数字だけ拾う
-        m = re.search(r"(-?[\d,]+)\s*$", text)
-        amount = int(m.group(1).replace(",", "")) if m and amount is None else amount
+        # 「支払手数料　814」「支払手数料　2,783円」のような自由記述：末尾の数字だけ拾う
+        m = re.search(r"(-?[\d,]+)\s*円?\s*$", text)
+        if amount is None and m:
+            amount = int(m.group(1).replace(",", ""))
         return None, "", "", text.strip(), amount
-    rest = [f for f in fields[1:] if f and not _NUM.match(f)]
+    rest = [f for f in fields[1:] if f and _num(f) is None]
+    if rest and _DATE.match(rest[0]):
+        # カード明細を貼った行（利用日｜処理日｜利用先｜金額）：2つ目の日付は処理日なので読み飛ばし、科目は空
+        rest = [""] + rest[1:]
     category = rest[0] if len(rest) > 0 else ""
     vendor = rest[1] if len(rest) > 1 else ""
     desc = " ".join(rest[2:])
