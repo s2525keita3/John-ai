@@ -39,6 +39,7 @@ from enex_fleet_master import (
     summarize_enex_by_base,
 )
 from enex_fleet_pdf import (
+    amex_hq_noise_reasons,
     filter_amex_hq_noise,
     filter_exclude_orico,
     parse_enex_fleet_pdf_bytes,
@@ -423,6 +424,11 @@ with st.sidebar:
         in_col = "入金金額"
         out_col = "出金金額"
     elif format_preset == "アメックス（activity CSV）":
+        st.info(
+            "アメックスは **本部経費ハブ**（フォーマットの一番下）で処理するのが標準です。"
+            "PLのメモと照合し、SoftBank の本部分・店舗分の按分まで確かめます（ルールブック §10）。",
+            icon="➡️",
+        )
         date_col = "ご利用日"
         summary_col = "ご利用内容"
         in_col = ""
@@ -1029,6 +1035,13 @@ if format_preset != FORMAT_PAYROLL_HQ:
             work = filter_exclude_orico(work, summary_col="摘要")
 
         if station is None and exclude_amex_hq_noise:
+            _amex_reasons = amex_hq_noise_reasons(work, summary_col="摘要", out_col="出金額")
+            if _amex_reasons.ne("").any():
+                # 黙って消さない：除外した行と理由を見せる
+                _ex = work.loc[_amex_reasons.ne(""), [c for c in ("日付", "摘要", "出金額") if c in work.columns]].copy()
+                _ex["除外の理由"] = _amex_reasons[_amex_reasons.ne("")]
+                st.warning(f"アメックス：{len(_ex)}行を集計から除外しました（理由つき）。", icon="ℹ️")
+                st.dataframe(_ex, hide_index=True, width="stretch")
             work = filter_amex_hq_noise(work, summary_col="摘要", out_col="出金額")
 
         if exclude_aozora_hq_noise and format_preset == "あおぞらネット銀行（法人口座・標準CSV）":

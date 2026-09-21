@@ -150,31 +150,39 @@ def filter_exclude_orico(df: pd.DataFrame, summary_col: str = "摘要") -> pd.Da
     return df[~mask].copy()
 
 
+AMEX_SOFTBANK_BULK_REASON = (
+    "SoftBank の一括請求（本部分＋4店舗分）。店舗分は各店舗へ付け替え済みのため、ここでは計上しない。"
+    "本部分は本部経費ハブ（PLメモとの按分照合）で確定する"
+)
+
+
+def amex_hq_noise_reasons(df: pd.DataFrame, summary_col: str = "摘要", out_col: str = "出金額") -> pd.Series:
+    """
+    アメックス本部振分で除外する行の理由（除外しない行は空文字）。
+    - 前回分口座振替金額（カード代金の支払い＝経費ではない）
+    - ソフトバンクＭ の一括請求（全社合計・各店へ付け替え済み。約17〜21万円帯）
+    """
+    from classifier import parse_amount_cell
+
+    reasons = pd.Series("", index=df.index)
+    if summary_col not in df.columns:
+        return reasons
+    s = df[summary_col].fillna("").astype(str)
+    reasons[s.str.contains("前回分口座振替金額", regex=False)] = "カード代金の口座振替（経費ではない）"
+    if out_col in df.columns:
+        amt = df[out_col].map(parse_amount_cell).fillna(0).abs()
+        sb = s.str.contains("ソフトバンク", regex=False) & (
+            s.str.contains("Ｍ", regex=False) | s.str.contains("M", regex=False)
+        )
+        bulk = (amt >= 170_000) & (amt <= 210_000)
+        reasons[sb & bulk & reasons.eq("")] = AMEX_SOFTBANK_BULK_REASON
+    return reasons
+
+
 def filter_amex_hq_noise(
     df: pd.DataFrame,
     summary_col: str = "摘要",
     out_col: str = "出金額",
 ) -> pd.DataFrame:
-    """
-    アメックス本部振分向けの除外:
-    - 前回分口座振替金額（締め替え・振分対象外）
-    - ソフトバンクＭ の一括請求（全社合計・各店按分済みのため約17〜20万円帯を除外）
-    """
-    from classifier import parse_amount_cell
-
-    if summary_col not in df.columns:
-        return df
-    s = df[summary_col].fillna("").astype(str)
-    drop = s.str.contains("前回分口座振替金額", regex=False)
-
-    amt = None
-    if out_col in df.columns:
-        amt = df[out_col].map(parse_amount_cell).fillna(0).abs()
-    if amt is not None:
-        sb = s.str.contains("ソフトバンク", regex=False) & (
-            s.str.contains("Ｍ", regex=False) | s.str.contains("M", regex=False)
-        )
-        bulk = (amt >= 170_000) & (amt <= 210_000)
-        drop = drop | (sb & bulk)
-
-    return df[~drop].copy()
+    """amex_hq_noise_reasons で理由が付いた行を除く（除いた行は画面の「除外一覧」に理由つきで出す）。"""
+    return df[amex_hq_noise_reasons(df, summary_col, out_col).eq("")].copy()
