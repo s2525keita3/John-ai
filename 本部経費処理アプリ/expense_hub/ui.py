@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from .ledger import Ledger
+from .ledger import LEDGER_SPREADSHEET_ID, Ledger, get_ledger
 from .models import PlMatch, Status
 from .pipeline import EXPORT_COLS, allocation_text, pl_sheets, run, summarize, to_csv
 from .pl_check import check_pl, latest_month
@@ -31,22 +31,28 @@ LEDGER_PATH = Path(os.environ.get("EXPENSE_HUB_DIR", Path.home() / ".john_expens
 _REPO_SECRETS = Path(__file__).resolve().parents[2] / ".streamlit" / "secrets.toml"
 
 
-def _sa_info() -> dict | None:
+def _secret(key: str):
     try:
-        info = st.secrets.get("gcp_service_account")
+        v = st.secrets.get(key)
     except Exception:  # secrets.toml が無い環境
-        info = None
-    if not info and _REPO_SECRETS.exists():
+        v = None
+    if not v and _REPO_SECRETS.exists():
         # ローカルで別フォルダから起動したとき（Streamlit は起動フォルダの .streamlit しか見ない）
         import tomllib
 
-        info = tomllib.loads(_REPO_SECRETS.read_text(encoding="utf-8")).get("gcp_service_account")
+        v = tomllib.loads(_REPO_SECRETS.read_text(encoding="utf-8")).get(key)
+    return v
+
+
+def _sa_info() -> dict | None:
+    info = _secret("gcp_service_account")
     return dict(info) if info else None
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="台帳を開いています…")
 def _ledger() -> Ledger:
-    return Ledger(LEDGER_PATH)
+    """secrets があれば台帳スプシ（再起動しても消えない）、無ければこのPCの SQLite。"""
+    return get_ledger(_sa_info(), LEDGER_PATH, _secret("ledger_spreadsheet_id") or LEDGER_SPREADSHEET_ID)
 
 
 @st.cache_data(ttl=300, show_spinner="収支計画スプシ（本部＋4店舗タブ）を読んでいます…")
@@ -161,6 +167,7 @@ def _render_amex(grids: dict[str, Grid], month: str, sheet: str) -> None:
         st.caption("店舗タブが見つからず按分照合を省いたもの：" + "、".join(missing))
 
     ledger = _ledger()
+    st.caption(f"台帳：{ledger.label}" + (f"（{ledger.fallback_reason}）" if getattr(ledger, "fallback_reason", "") else ""))
     key = (src.name, len(src.getvalue()), month, sheet, grid.origin)
     if st.session_state.get("hub_key") != key:
         try:
