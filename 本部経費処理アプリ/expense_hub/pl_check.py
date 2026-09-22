@@ -92,7 +92,8 @@ def check_pl(grids: dict[str, Grid], month: str) -> list[Finding]:
             for item, (row_prefix, pat) in RECHARGES.items():
                 r = _row_of(g, row_prefix)
                 if r and not re.search(pat, g.note(r, col), re.I):
-                    out.append(Finding("要対応", "C 付け替え", d.name, Grid.coord(r, col), f"{item} が{row_prefix}のメモにない"))
+                    how = "→ 金額は推測しない。本部事務に店舗別の掛金を確認して埋める" if item == "中退共" else ""
+                    out.append(Finding("要対応", "C 付け替え", d.name, Grid.coord(r, col), f"{item} が{row_prefix}のメモにない{how}"))
             v26 = g.value(STORE_ALLOC_ROW, col)
             want = f"'{HQ_SHEET}'!"
             if not (isinstance(v26, str) and v26.replace(" ", "").startswith(f"={want}")):
