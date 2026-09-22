@@ -46,3 +46,9 @@ def test_dateless_recharge_line_gets_month_end_date():
     d, cat, vendor, desc, amt = _parse_line("通信費\t株式会社ジョン　GMOあおネット銀行　代表口座\tSoftbankスマホ利用料　6月分\t15,614", 2026)
     assert (d, cat, amt) == (date(2026, 6, 30), "通信費", 15614)
     assert "代表口座" in vendor and "6月分" in desc
+
+
+def test_space_separated_line():
+    # 新子安6月：タブではなく半角スペースの連続で区切られている
+    d, cat, vendor, desc, amt = _parse_line("26/06/08        通信費                SMBC（フジフィルムBI）        4月　複合機プリントアウト使用料                7,217", 2026)
+    assert (d, cat, vendor, amt) == (date(2026, 6, 8), "通信費", "SMBC（フジフィルムBI）", 7217)

@@ -21,6 +21,7 @@ _DATE = re.compile(r"^\s*\d*?(\d{2}|20\d{2})/(\d{1,2})/(\d{1,2})")  # 「22026/0
 # 科目欄に入る語（これ以外が科目欄に来て相手先欄が空なら、それは相手先＝「日付｜利用先｜金額」の3欄形式）
 _CATEGORY_WORDS = ("費", "料", "賃", "金", "返済", "入金", "出金", "賞与", "雑収入", "報酬", "諸会", "経費", "会議")
 _NUM = re.compile(r"^-?[\d,]+$")
+_SPACES = re.compile(r" {2,}")
 
 
 def _parse_date(s: str, default_year: int) -> date | None:
@@ -48,7 +49,8 @@ def _parse_line(text: str, default_year: int) -> tuple[date | None, str, str, st
     金額は「内容のあとに出てくる最初の数字」。銀行明細を貼った行は右端に残高が付くことがあるため
     （例：…｜175,000｜1,920,051）、右端の数字を金額にしてはいけない。
     """
-    fields = [f.strip() for f in text.split("\t")]
+    # 区切りはタブ。タブが無く半角スペースが2つ以上続く行は、それを区切りとみなす（新子安6月の貼り方）
+    fields = [f.strip() for f in (text.split("\t") if "\t" in text else _SPACES.split(text))]
     nums = [n for n in (_num(f) for f in fields[1:]) if n is not None]
     amount = nums[0] if nums else None
     d = _parse_date(fields[0], default_year) if fields else None
