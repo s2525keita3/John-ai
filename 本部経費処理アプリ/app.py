@@ -12,6 +12,35 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+
+def _refresh_local_modules() -> None:
+    """
+    このフォルダのモジュールが push で更新されていたら読み直す。
+    Streamlit Cloud は push 後に app.py だけ新しくし、import 済みの自前モジュールは古いまま残すため、
+    新しい app.py が古い enex_fleet_pdf を import して ImportError で落ちた（2026-09-22）。
+    ファイルの更新時刻を覚えておき、変わっていたら sys.modules から外して次の import で読み直させる。
+    """
+    here = Path(__file__).resolve().parent
+    seen = sys.__dict__.setdefault("_honbu_module_mtimes", {})
+    for name, mod in list(sys.modules.items()):
+        f = getattr(mod, "__file__", None)
+        if not f:
+            continue
+        p = Path(f).resolve()
+        if here not in p.parents or p == Path(__file__).resolve():
+            continue
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            continue
+        if seen.get(name) != mtime:
+            # 変わったもの・初めて見るもの（この仕組みが入る前に読まれたもの）は一度読み直す
+            sys.modules.pop(name, None)
+            seen[name] = mtime
+
+
+_refresh_local_modules()
+
 from classifier import (
     aggregate_by_pl,
     classify_dataframe,
