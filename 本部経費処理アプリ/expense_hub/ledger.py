@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE TABLE IF NOT EXISTS pl_backups (
   at TEXT, month TEXT, path TEXT, reason TEXT
 );
+CREATE TABLE IF NOT EXISTS decisions (
+  at TEXT, actor TEXT, vendor_key TEXT, vendor_raw TEXT, action TEXT, category TEXT, department TEXT, record_id TEXT, month TEXT
+);
 CREATE TABLE IF NOT EXISTS pl_writes (
   at TEXT, actor TEXT, record_id TEXT, sheet TEXT, cell TEXT,
   old_value REAL, new_value REAL, note_line TEXT, ok INTEGER, message TEXT
@@ -101,6 +104,13 @@ class Ledger:
             self.db.execute("INSERT INTO pl_backups VALUES (?,?,?,?)", (stamp, month, str(p), reason))
         return p
 
+    def save_decision(self, row: list) -> None:
+        with self.lock, self.db:
+            self.db.execute("INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?)", row)
+
+    def decisions(self) -> list[list]:
+        return [list(r) for r in self.db.execute("SELECT * FROM decisions ORDER BY at")]
+
     def log_write(self, actor: str, result) -> None:
         """PLへの書き込み1件（要件定義 §12-6：反映セル・旧値・新値・担当者・日時）。"""
         c = result.change
@@ -124,6 +134,7 @@ SHEET_COLUMNS = {
     "audit_log": ["at", "actor", "record_id", "action", "detail"],
     "pl_backups": ["at", "month", "reason", "bytes", "sha256", "local_path"],
     "pl_writes": ["at", "actor", "record_id", "sheet", "cell", "old_value", "new_value", "note_line", "ok", "message"],
+    "decisions": ["at", "actor", "vendor_key", "vendor_raw", "action", "category", "department", "record_id", "month"],
 }
 
 
@@ -224,6 +235,14 @@ class SheetsLedger:
         with self.lock:
             self._append("pl_writes", [[result.at, actor, c.record_id, c.sheet, c.cell, c.old_value, c.new_value,
                                         c.note_line, int(result.ok), result.message]])
+
+    def save_decision(self, row: list) -> None:
+        with self.lock:
+            self._append("decisions", [row])
+
+    def decisions(self) -> list[list]:
+        got = self.svc.spreadsheets().values().get(spreadsheetId=self.sid, range="decisions!A2:I").execute()
+        return got.get("values", [])
 
 
 def _sheets_service(sa_info: dict):

@@ -29,3 +29,14 @@ def test_card_paste_with_processing_date():
     # 本部1〜2月：利用日｜処理日｜利用先｜金額
     d, cat, vendor, _, amt = _parse_line("2025/12/31\t2026/1/9\tソフトバンクＭ\t6,800", 2026)
     assert (d, cat, vendor, amt) == (date(2025, 12, 31), "", "ソフトバンクＭ", 6800)
+
+
+def test_three_column_card_paste_puts_vendor_in_vendor():
+    # 本部1〜2月：日付｜利用先｜金額（科目欄が無い）
+    d, cat, vendor, _, amt = _parse_line("2026/02/01\tＬＩＮＥ公式アカウント　東京都　新宿区\t5,500", 2026)
+    assert (cat, vendor, amt) == ("", "ＬＩＮＥ公式アカウント　東京都　新宿区", 5500)
+
+
+def test_typo_date_with_extra_digit():
+    d, *_ = _parse_line("22026/02/13\tＭａｎｅｑｌ　大阪府\t21,780", 2026)
+    assert d == date(2026, 2, 13)

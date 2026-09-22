@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from .learning import apply_learned, decision_row, learn
 from .ledger import LEDGER_SPREADSHEET_ID, Ledger, get_ledger
 from .models import PlMatch, Status
 from .pipeline import EXPORT_COLS, allocation_text, pl_sheets, run, summarize, to_csv
@@ -172,6 +173,13 @@ def _render_amex(grids: dict[str, Grid], month: str, sheet: str) -> None:
     if st.session_state.get("hub_key") != key:
         try:
             res = run(src.getvalue(), src.name, grids, month, sheet, ledger=ledger)
+            # 過去の判断を当てる（同じ利用先で同じ判断が2回続いたものは自動確定）
+            try:
+                learned_n = apply_learned(res.records, learn(ledger.decisions()))
+            except Exception as e:  # 台帳が読めなくても照合は続ける
+                learned_n = 0
+                st.caption(f"学習済み判断を読めませんでした：{e}")
+            res.summary["学習で自動確定"] = learned_n
         except ValueError as e:
             st.error(str(e))
             return
@@ -204,7 +212,8 @@ def _dashboard(res) -> None:
     m = st.columns(5)
     m[0].metric("入力ソース：アメックス", f"{s['行数']}行")
     m[1].metric("経費総額", f"{s['経費総額']:,}円", f"除外 {s['除外額（口座振替等）']:,}円", delta_color="off")
-    m[2].metric("自動確認済み", f"{s['自動確認済み']}件", f"うち按分一致 {s['按分一致']}件", delta_color="off")
+    m[2].metric("自動確認済み", f"{s['自動確認済み']}件",
+                f"按分一致 {s['按分一致']}／学習 {res.summary.get('学習で自動確定', 0)}", delta_color="off")
     m[3].metric("要確認（残り）", f"{pending}件")
     m[4].metric("差異額", f"{s['差異額']:,}円")
     m = st.columns(5)
@@ -290,6 +299,7 @@ def _review(res, grid: Grid, month: str, ledger: Ledger) -> None:
                     r.expense_category = cat
                 r.log(f"REVIEW:{action}", f"科目={r.expense_category} 部門={dept}", actor=reviewer)
                 ledger.update(r, month)
+                ledger.save_decision(decision_row(r, _dec()[r.id], month))
                 st.rerun()
 
 

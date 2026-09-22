@@ -2,10 +2,11 @@
 原本明細 × PLセルメモ の照合（要件定義 §8・§9・§11）。
 
 段階的に当てる。1本のメモ明細は1本の原本にしか使わない。
-  1. 利用先＋日付＋金額が一致           → 一致（自動確認済み）
+  探す列＝原本の利用月とその翌月（カード払いは月末付近の利用が翌月列に入る。実データは両方が混在）。
+  1. 利用先＋日付＋金額が一致（利用月／翌月の列）→ 一致（自動確認済み）
   2. 日付＋金額は一致・利用先名が違う    → 要確認（候補を提示）
   3. 利用先＋日付は一致・金額が違う      → 金額差異（要確認）
-  4. 利用先＋金額は一致・別の月列に計上  → 計上月差（要確認）
+  4. 利用先＋日付＋金額が一致・それ以外の月列に計上 → 計上月差（要確認）※日付も合わせる（定期支払いの別月を拾わない）
   5. どれにも当たらない                  → PL未反映候補（要確認）
   6. 金額差異のうち、差額が店舗タブに按分されていれば → 按分一致（match_allocations）
 差異があるものは自動で確定しない。PLへの書き込みもしない。
@@ -36,12 +37,20 @@ def _attach(rec: ExpenseRecord, note: PlNoteLine) -> None:
         rec.expense_category = note.row_label or note.category
 
 
+def _own_months(rec: ExpenseRecord) -> set[str]:
+    """この原本が入っていてよい月列＝利用月と翌月。"""
+    m = rec.transaction_date.month
+    return {f"{m}月", f"{m % 12 + 1}月"}
+
+
 def match(records: list[ExpenseRecord], notes: list[PlNoteLine], target_month: str) -> list[PlNoteLine]:
-    """records を更新し、どの原本にも当たらなかったメモ明細を返す。"""
+    """records を更新し、対象月の列でどの原本にも当たらなかったメモ明細を返す。"""
     used: set[int] = set()
     pending = [r for r in records if r.approval_status != Status.EXCLUDED]
-    month_notes = [(i, n) for i, n in enumerate(notes) if n.month_col == target_month]
-    other_notes = [(i, n) for i, n in enumerate(notes) if n.month_col != target_month]
+    indexed = list(enumerate(notes))
+    month_notes = [(i, n) for i, n in indexed if n.month_col == target_month]
+    own = lambda r: [(i, n) for i, n in indexed if n.month_col in _own_months(r)]
+    other = lambda r: [(i, n) for i, n in indexed if n.month_col not in _own_months(r)]
 
     def take(rec, pool, cond):
         best = None
@@ -58,24 +67,24 @@ def match(records: list[ExpenseRecord], notes: list[PlNoteLine], target_month: s
 
     stages = [
         (
-            month_notes,
+            own,
             lambda r, n: (
                 n.amount == r.amount and _date_ok(r, n) and vendor_similarity(r.vendor_normalized, n.vendor_normalized) >= VENDOR_OK,
                 vendor_similarity(r.vendor_normalized, n.vendor_normalized),
             ),
             PlMatch.MATCHED,
             Status.AUTO_MATCHED,
-            lambda r, n: f"PL {n.cell}（{n.row_label}）のメモと利用先・日付・金額が一致",
+            lambda r, n: f"PL {n.cell}（{n.month_col}・{n.row_label}）のメモと利用先・日付・金額が一致",
         ),
         (
-            month_notes,
+            own,
             lambda r, n: (n.amount == r.amount and _date_ok(r, n), 1.0),
             PlMatch.MATCHED,
             Status.REVIEW_REQUIRED,
             lambda r, n: f"PL {n.cell}（{n.row_label}）の「{n.vendor_raw or n.description}」と日付・金額は一致、利用先名が違う＝同一か確認",
         ),
         (
-            month_notes,
+            own,
             lambda r, n: (
                 _date_ok(r, n) and vendor_similarity(r.vendor_normalized, n.vendor_normalized) >= VENDOR_OK,
                 -abs((n.amount or 0) - r.amount),
@@ -85,14 +94,14 @@ def match(records: list[ExpenseRecord], notes: list[PlNoteLine], target_month: s
             lambda r, n: f"PL {n.cell}（{n.row_label}）のメモは {n.amount:,}円、原本は {r.amount:,}円＝差 {r.amount - n.amount:,}円",
         ),
         (
-            other_notes,
+            other,
             lambda r, n: (
-                n.amount == r.amount and vendor_similarity(r.vendor_normalized, n.vendor_normalized) >= VENDOR_OK,
+                n.amount == r.amount and _date_ok(r, n) and vendor_similarity(r.vendor_normalized, n.vendor_normalized) >= VENDOR_OK,
                 vendor_similarity(r.vendor_normalized, n.vendor_normalized),
             ),
             PlMatch.MONTH_DIFF,
             Status.REVIEW_REQUIRED,
-            lambda r, n: f"{target_month}列ではなく {n.month_col}列の PL {n.cell}（{n.row_label}）に計上済み",
+            lambda r, n: f"利用月・翌月ではなく {n.month_col}列の PL {n.cell}（{n.row_label}）に計上されている",
         ),
     ]
 
@@ -100,7 +109,7 @@ def match(records: list[ExpenseRecord], notes: list[PlNoteLine], target_month: s
         for rec in pending:
             if rec.pl_note_match_status != PlMatch.UNCHECKED:
                 continue
-            n = take(rec, pool, cond)
+            n = take(rec, pool(rec), cond)
             if n is None:
                 continue
             _attach(rec, n)
@@ -113,10 +122,21 @@ def match(records: list[ExpenseRecord], notes: list[PlNoteLine], target_month: s
         if rec.pl_note_match_status == PlMatch.UNCHECKED:
             rec.pl_note_match_status = PlMatch.NOT_IN_PL
             rec.approval_status = Status.REVIEW_REQUIRED
-            rec.judgement_reason = f"PL（{target_month}）のメモに該当なし＝未反映候補"
+            rec.judgement_reason = f"PL（利用月と翌月）のメモに該当なし＝未反映候補"
             rec.log(rec.approval_status.value, rec.judgement_reason)
 
     return [n for i, n in month_notes if i not in used]
+
+
+def _month_of_cell(rec: ExpenseRecord) -> str | None:
+    """本部タブのセル（例 K16）→ 月列。見出し行は D=1月 … O=12月。"""
+    if not rec.pl_cell:
+        return None
+    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+
+    col, _ = coordinate_from_string(rec.pl_cell)
+    m = column_index_from_string(col) - 3
+    return f"{m}月" if 1 <= m <= 12 else None
 
 
 def match_allocations(
@@ -137,11 +157,13 @@ def match_allocations(
         if diff <= 0:
             continue
         label = rec.expense_category
+        # 店舗タブは本部メモと同じ月列を見る（本部が付け替えた月＝店舗に載る月）
+        month = _month_of_cell(rec) or target_month
         options = []
         for dept, notes in store_notes.items():
             cands = [
                 n for n in notes
-                if n.month_col == target_month and n.row_label == label and n.amount and n.amount > 0
+                if n.month_col == month and n.row_label == label and n.amount and n.amount > 0
                 and (n.sheet, n.cell, n.line_no) not in used
             ][:max_lines]
             options.append([None] + [(dept, n) for n in cands])

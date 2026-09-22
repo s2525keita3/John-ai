@@ -16,7 +16,9 @@ from .pl_source import Grid
 from .vendor import normalize_vendor
 
 DEFAULT_SHEET = "2026年本部"
-_DATE = re.compile(r"^\s*(\d{2,4})/(\d{1,2})/(\d{1,2})")
+_DATE = re.compile(r"^\s*\d*?(\d{2}|20\d{2})/(\d{1,2})/(\d{1,2})")  # 「22026/02/13」の打ち間違いも吸収
+# 科目欄に入る語（これ以外が科目欄に来て相手先欄が空なら、それは相手先＝「日付｜利用先｜金額」の3欄形式）
+_CATEGORY_WORDS = ("費", "料", "賃", "金", "返済", "入金", "出金", "賞与", "雑収入", "報酬", "諸会", "経費", "会議")
 _NUM = re.compile(r"^-?[\d,]+$")
 
 
@@ -59,6 +61,9 @@ def _parse_line(text: str, default_year: int) -> tuple[date | None, str, str, st
     if rest and _DATE.match(rest[0]):
         # カード明細を貼った行（利用日｜処理日｜利用先｜金額）：2つ目の日付は処理日なので読み飛ばし、科目は空
         rest = [""] + rest[1:]
+    if len(rest) == 1 and rest[0] and not any(w in rest[0] for w in _CATEGORY_WORDS):
+        # 「日付｜利用先｜金額」の3欄形式：科目欄の文字は利用先
+        rest = ["", rest[0]]
     category = rest[0] if len(rest) > 0 else ""
     vendor = rest[1] if len(rest) > 1 else ""
     desc = " ".join(rest[2:])
