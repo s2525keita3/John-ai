@@ -40,3 +40,9 @@ def test_three_column_card_paste_puts_vendor_in_vendor():
 def test_typo_date_with_extra_digit():
     d, *_ = _parse_line("22026/02/13\tＭａｎｅｑｌ　大阪府\t21,780", 2026)
     assert d == date(2026, 2, 13)
+
+
+def test_dateless_recharge_line_gets_month_end_date():
+    d, cat, vendor, desc, amt = _parse_line("通信費\t株式会社ジョン　GMOあおネット銀行　代表口座\tSoftbankスマホ利用料　6月分\t15,614", 2026)
+    assert (d, cat, amt) == (date(2026, 6, 30), "通信費", 15614)
+    assert "代表口座" in vendor and "6月分" in desc

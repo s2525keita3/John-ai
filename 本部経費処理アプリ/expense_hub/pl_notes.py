@@ -8,6 +8,7 @@ PLの値・メモは読むだけで、ここでは絶対に書き換えない。
 """
 from __future__ import annotations
 
+import calendar
 import re
 from datetime import date
 
@@ -51,8 +52,15 @@ def _parse_line(text: str, default_year: int) -> tuple[date | None, str, str, st
     nums = [n for n in (_num(f) for f in fields[1:]) if n is not None]
     amount = nums[0] if nums else None
     d = _parse_date(fields[0], default_year) if fields else None
+    if d is None and len(fields) >= 3:
+        # 日付なしの付け替え行（科目｜相手先｜内容「◯月分」｜金額）：内容の「◯月分」＝その月の末日を日付にする
+        m = re.search(r"(\d{1,2})月分", text)
+        if m:
+            mo = int(m.group(1))
+            d = date(default_year, mo, calendar.monthrange(default_year, mo)[1])
+            fields = [""] + fields  # 先頭に空の日付欄を足して標準形にそろえる
     if d is None:
-        # 「支払手数料　814」「支払手数料　2,783円」のような自由記述：末尾の数字だけ拾う
+        # 「支払手数料　814」のような自由記述：末尾の数字だけ拾う
         m = re.search(r"(-?[\d,]+)\s*円?\s*$", text)
         if amount is None and m:
             amount = int(m.group(1).replace(",", ""))

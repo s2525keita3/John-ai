@@ -29,6 +29,15 @@ def _date_ok(rec: ExpenseRecord, note: PlNoteLine) -> bool:
     return abs(note.date - rec.transaction_date) <= DATE_TOL
 
 
+def _sim(r: ExpenseRecord, n: PlNoteLine) -> float:
+    """利用先の近さ。相手先が「代表口座」等の付け替え行は、内容欄の呼び名（ALIASES）でも一致とみなす。"""
+    v = vendor_similarity(r.vendor_normalized, n.vendor_normalized)
+    words = alias_words(r.vendor_normalized)
+    if v < VENDOR_OK and words and mentions(n.description or n.raw, words):
+        return 1.0
+    return v
+
+
 def _attach(rec: ExpenseRecord, note: PlNoteLine) -> None:
     rec.pl_sheet = note.sheet
     rec.pl_cell = note.cell
@@ -69,8 +78,8 @@ def match(records: list[ExpenseRecord], notes: list[PlNoteLine], target_month: s
         (
             own,
             lambda r, n: (
-                n.amount == r.amount and _date_ok(r, n) and vendor_similarity(r.vendor_normalized, n.vendor_normalized) >= VENDOR_OK,
-                vendor_similarity(r.vendor_normalized, n.vendor_normalized),
+                n.amount == r.amount and _date_ok(r, n) and _sim(r, n) >= VENDOR_OK,
+                _sim(r, n),
             ),
             PlMatch.MATCHED,
             Status.AUTO_MATCHED,
@@ -86,7 +95,7 @@ def match(records: list[ExpenseRecord], notes: list[PlNoteLine], target_month: s
         (
             own,
             lambda r, n: (
-                _date_ok(r, n) and vendor_similarity(r.vendor_normalized, n.vendor_normalized) >= VENDOR_OK,
+                _date_ok(r, n) and _sim(r, n) >= VENDOR_OK,
                 -abs((n.amount or 0) - r.amount),
             ),
             PlMatch.AMOUNT_DIFF,
@@ -96,8 +105,8 @@ def match(records: list[ExpenseRecord], notes: list[PlNoteLine], target_month: s
         (
             other,
             lambda r, n: (
-                n.amount == r.amount and _date_ok(r, n) and vendor_similarity(r.vendor_normalized, n.vendor_normalized) >= VENDOR_OK,
-                vendor_similarity(r.vendor_normalized, n.vendor_normalized),
+                n.amount == r.amount and _date_ok(r, n) and _sim(r, n) >= VENDOR_OK,
+                _sim(r, n),
             ),
             PlMatch.MONTH_DIFF,
             Status.REVIEW_REQUIRED,
