@@ -38,3 +38,19 @@ def test_default_station_is_hq():
 def test_sakuragicho_store_mode_still_drops_staff_salary():
     rows = ["振込 ヤマグチ サオリ", "振込 カ）ユ－スポ"]
     assert _kept(rows, station="桜木町") == ["振込 カ）ユ－スポ"]
+
+
+def test_sakuragicho_does_not_drop_inflow_matching_surname():
+    # 入金（横浜市福祉サービス協会 中介護事務所）が姓カナ「ナカ」に当たって消えていた
+    df = pd.DataFrame({
+        "摘要": ["振込  フク）ヨコハマシフクシサ－ビスキヨウカイ，ナカカイゴジムシヨ", "振込 ミツビシユ－エフジエイ ナカ　ツカサ"],
+        "入金": [11000, 0],
+        "出金": [0, 342750],
+    })
+    kept = filter_aozora_hq_noise(df, summary_col="摘要", station="桜木町")["摘要"].tolist()
+    assert kept == ["振込  フク）ヨコハマシフクシサ－ビスキヨウカイ，ナカカイゴジムシヨ"]
+
+
+def test_sakuragicho_extra_fullnames_dropped():
+    rows = ["振込 ミズホ カナイ　ミホ", "振込 ラクテン タワ　シヨウコ", "振込 カ）タワ－パ－キング"]
+    assert _kept(rows, station="桜木町") == ["振込 カ）タワ－パ－キング"]

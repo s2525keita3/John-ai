@@ -50,7 +50,8 @@ def load_master_dataframe(df: pd.DataFrame) -> list[MasterRow]:
                 pl_account=pl,
                 amount_min=float(lo) if pd.notna(lo) and str(lo).strip() != "" else None,
                 amount_max=float(hi) if pd.notna(hi) and str(hi).strip() != "" else None,
-                source=str(r.get("データソース区分", "") or "").strip(),
+                # 空欄（NaN）を "nan" にしない。"nan" だとデータソース指定時に共通ルールが一切効かない
+                source=str(r.get("データソース区分")).strip() if pd.notna(r.get("データソース区分")) else "",
             )
         )
     return rows
@@ -119,7 +120,8 @@ def classify_row(
         return "判断不能", None, None
 
     # 長いキーワードを優先（「アマゾン」より「アマゾンサービシーズインターナショナル」）
-    candidates.sort(key=lambda m: len(m.keyword), reverse=True)
+    # 長さが同じなら、データソース指定ありの行（例：あおぞら専用）を共通ルールより優先
+    candidates.sort(key=lambda m: (len(normalize_for_match(m.keyword)), bool(m.source)), reverse=True)
 
     def _in_range(m: MasterRow) -> bool:
         lo = m.amount_min if m.amount_min is not None else float("-inf")

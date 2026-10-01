@@ -31,6 +31,9 @@ STATION_STAFF_FULLNAMES: dict[str, tuple[str, ...]] = {
         "モリリサ",            # 森里紗
         "タテユリア",          # 舘百合亜
         "ミシマシユウセイ",    # 三島柊生
+        "サトウシユウセイ",    # 同一人物の改姓後（2026-08〜。8月は「シヨウセイ」表記。オーナー確認済 2026-10-01）
+        "サトウシヨウセイ",
+        "テラシマハルカ",      # 寺嶋陽花（2026-09 入職。オーナー確認済 2026-10-01）
         "サトウリヨウカ",      # 佐藤凌翔
         "フカヤトシユキ",      # 深谷敏行
         "ヨコヤママヤ",        # 横山摩耶
@@ -81,6 +84,11 @@ _SAKURAGICHO_SURNAMES = (
     "イシダミユキ",
     "イシイ",
     "サトウ",
+)
+# 姓カナの部分一致に足すと誤除外が怖い名義は、フルネーム（正規化一致）で足す。
+_SAKURAGICHO_EXTRA_FULLNAMES = (
+    "カナイミホ",          # 金井未歩（2026-08 社用車購入メモで桜木町スタッフと確認）
+    "タワシヨウコ",        # 旧姓スズキ（改姓・オーナー確認済 2026-10-01。部分一致「スズキ」では拾えない）
 )
 
 # 店舗取り違え検知用（その店舗の明細にしか出ない中核スタッフのフルネーム）。
@@ -157,6 +165,9 @@ def _staff_salary_mask(summaries: pd.Series, station: str | None) -> pd.Series:
         mask = pd.Series(False, index=s.index)
         for kw in _SAKURAGICHO_SURNAMES:
             mask = mask | s.str.contains(kw, regex=False)
+        normed = s.map(_norm)
+        for name in _SAKURAGICHO_EXTRA_FULLNAMES:
+            mask = mask | normed.str.contains(name, regex=False)
         return mask
     names = STATION_STAFF_FULLNAMES.get(station, ())
     normed = summaries.fillna("").astype(str).map(_norm)
@@ -164,6 +175,19 @@ def _staff_salary_mask(summaries: pd.Series, station: str | None) -> pd.Series:
     for name in names:
         mask = mask | normed.str.contains(name, regex=False)
     return mask
+
+
+def _is_inflow(df: pd.DataFrame) -> pd.Series:
+    """入金の行（出金が無く入金がある）。給与は必ず出金なので、給与名義の除外を入金に当てない
+    （桜木町の姓カナ「ナカ」が「…，ナカカイゴジムシヨ」からの入金を消していた 2026-10-01）。"""
+    in_col = next((c for c in ("入金額", "入金") if c in df.columns), None)
+    if in_col is None:
+        return pd.Series(False, index=df.index)
+    out_col = next((c for c in ("出金額", "出金") if c in df.columns), None)
+    inflow = pd.to_numeric(df[in_col], errors="coerce").fillna(0) > 0
+    if out_col is not None:
+        inflow = inflow & (pd.to_numeric(df[out_col], errors="coerce").fillna(0) == 0)
+    return inflow
 
 
 def filter_aozora_hq_noise(
@@ -205,7 +229,7 @@ def filter_aozora_hq_noise(
         # 小口補充・現金移動（ATM出入金・手数料）は小口入力側で明細化するため除外
         # （桜木町=ゆうちょ／白根=セブン銀行など、店舗によりATM機関が異なるため機関は限定しない）
         | st.str.startswith("ATM")
-        | _staff_salary_mask(s, station)
+        | (_staff_salary_mask(s, station) & ~_is_inflow(df))
     )
 
     return df[~drop].copy()
