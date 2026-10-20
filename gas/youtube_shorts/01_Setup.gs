@@ -1,0 +1,75 @@
+// =============================================================
+// 01_Setup.gs  メニュー・初期化
+// =============================================================
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('ショート投稿')
+    .addItem('① 初期セットアップ（シート・フォルダ作成）', 'setupShorts')
+    .addItem('② キューを更新（Driveを読む）',             'refreshQueue')
+    .addSeparator()
+    .addItem('③ 今すぐ1本投稿',                          'postOneNow')
+    .addItem('④ 毎日自動投稿をON（トリガー作成）',        'installDailyTrigger')
+    .addItem('　 毎日自動投稿をOFF',                      'removeDailyTrigger')
+    .addToUi();
+}
+
+function setupShorts() {
+  const ss = SpreadsheetApp.getActive();
+  // 設定シート
+  let st = ss.getSheetByName(SHORTS_SHEET.SETTINGS);
+  if (!st) {
+    st = ss.insertSheet(SHORTS_SHEET.SETTINGS);
+    const rows = [['キー', '値', '説明']];
+    const desc = {
+      SOURCE_FOLDER_ID: '動画を入れるDriveフォルダのID',
+      POSTED_FOLDER_NAME: '投稿済みを移すサブフォルダ名',
+      FAILED_FOLDER_NAME: '投稿失敗を移すサブフォルダ名',
+      POSTS_PER_RUN: '1回の実行で投稿する本数',
+      PRIVACY_STATUS: 'public / unlisted / private',
+      CHANNEL_NAME: '表示用',
+      DEFAULT_TAGS: 'カンマ区切りタグ',
+      HASHTAGS: '説明文末尾のハッシュタグ',
+      FOOTER: '説明文の定型フッター',
+      MAX_FILE_MB: 'この容量を超える動画は保留',
+      SELF_DECLARED_MADE_FOR_KIDS: '子ども向けか（通常 false）',
+      POST_HOUR: '自動投稿の時刻（0-23, 既定 19）'
+    };
+    for (const k of Object.keys(DEFAULTS)) rows.push([k, DEFAULTS[k], desc[k] || '']);
+    rows.push(['POST_HOUR', '19', desc.POST_HOUR]);
+    st.getRange(1, 1, rows.length, 3).setValues(rows);
+    st.setColumnWidths(1, 3, 260);
+  }
+  // キュー・ログ
+  ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
+  ensureSheet_(SHORTS_SHEET.LOG, LOG_HEADER);
+  // サブフォルダ
+  getOrCreateSubfolder_(getSetting_('POSTED_FOLDER_NAME'));
+  getOrCreateSubfolder_(getSetting_('FAILED_FOLDER_NAME'));
+  refreshQueue();
+  SpreadsheetApp.getUi().alert('✅ セットアップ完了', '「投稿キュー」で文面を確認・編集できます。', SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+function ensureSheet_(name, header) {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function installDailyTrigger() {
+  removeDailyTrigger();
+  const hour = Number(getSetting_('POST_HOUR') || 19);
+  ScriptApp.newTrigger('postScheduled').timeBased().everyDays(1).atHour(hour).create();
+  SpreadsheetApp.getUi().alert(`毎日 ${hour}時台に自動投稿します。`);
+}
+
+function removeDailyTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'postScheduled')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+}
