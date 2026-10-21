@@ -57,6 +57,7 @@ function getSetting_(key) {
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('ショート投稿')
+    .addItem('⓪ 投稿先チャンネルを確認',                 'checkChannel')
     .addItem('① 初期セットアップ（シート・フォルダ作成）', 'setupShorts')
     .addItem('② キューを更新（Driveを読む）',             'refreshQueue')
     .addSeparator()
@@ -124,6 +125,18 @@ function removeDailyTrigger() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'postScheduled')
     .forEach(t => ScriptApp.deleteTrigger(t));
+}
+
+// 投稿先チャンネル（このスクリプトを実行しているアカウントの既定チャンネル）を表示
+function checkChannel() {
+  const ch = getMyChannel_();
+  const expected = getSetting_('CHANNEL_NAME');
+  const ok = ch.title === expected;
+  SpreadsheetApp.getUi().alert(
+    ok ? '✅ 投稿先チャンネルOK' : '⚠️ 投稿先チャンネルが違います',
+    `このアカウントの投稿先: ${ch.title}\n期待するチャンネル: ${expected}` +
+    (ok ? '' : '\n\nYouTubeでアカウント切替して「ぴゅあの日常」を既定にするか、チャンネルを管理するGoogleアカウントで実行してください。投稿は止めてあります。'),
+    SpreadsheetApp.getUi().ButtonSet.OK);
 }
 // =============================================================
 // 02_Queue.gs  Driveフォルダ → 投稿キュー
@@ -261,6 +274,14 @@ function postNext_() {
   const data = sh.getDataRange().getValues();
   const idx = data.findIndex((r, i) => i > 0 && r[Q.STATUS] === '待機');
   if (idx < 0) return false;
+
+  // 安全装置：投稿先が「ぴゅあの日常」でなければ何もしない
+  const ch = getMyChannel_();
+  if (ch.title !== getSetting_('CHANNEL_NAME')) {
+    appendLog_([new Date(), '', '', '', '', '停止', `投稿先チャンネルが「${ch.title}」のため中止`]);
+    return false;
+  }
+
   const row = data[idx];
   const rowNo = idx + 1;
   const fileId = row[Q.FILE_ID];
@@ -300,4 +321,10 @@ function postNext_() {
 
 function appendLog_(row) {
   ensureSheet_(SHORTS_SHEET.LOG, LOG_HEADER).appendRow(row);
+}
+
+function getMyChannel_() {
+  const res = YouTube.Channels.list('snippet', { mine: true });
+  if (!res.items || !res.items.length) throw new Error('このアカウントにYouTubeチャンネルがありません');
+  return { id: res.items[0].id, title: res.items[0].snippet.title };
 }

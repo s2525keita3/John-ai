@@ -24,6 +24,14 @@ function postNext_() {
   const data = sh.getDataRange().getValues();
   const idx = data.findIndex((r, i) => i > 0 && r[Q.STATUS] === '待機');
   if (idx < 0) return false;
+
+  // 安全装置：投稿先が「ぴゅあの日常」でなければ何もしない
+  const ch = getMyChannel_();
+  if (ch.title !== getSetting_('CHANNEL_NAME')) {
+    appendLog_([new Date(), '', '', '', '', '停止', `投稿先チャンネルが「${ch.title}」のため中止`]);
+    return false;
+  }
+
   const row = data[idx];
   const rowNo = idx + 1;
   const fileId = row[Q.FILE_ID];
@@ -63,4 +71,10 @@ function postNext_() {
 
 function appendLog_(row) {
   ensureSheet_(SHORTS_SHEET.LOG, LOG_HEADER).appendRow(row);
+}
+
+function getMyChannel_() {
+  const res = YouTube.Channels.list('snippet', { mine: true });
+  if (!res.items || !res.items.length) throw new Error('このアカウントにYouTubeチャンネルがありません');
+  return { id: res.items[0].id, title: res.items[0].snippet.title };
 }

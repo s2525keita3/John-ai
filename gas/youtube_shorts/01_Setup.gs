@@ -5,6 +5,7 @@
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('ショート投稿')
+    .addItem('⓪ 投稿先チャンネルを確認',                 'checkChannel')
     .addItem('① 初期セットアップ（シート・フォルダ作成）', 'setupShorts')
     .addItem('② キューを更新（Driveを読む）',             'refreshQueue')
     .addSeparator()
@@ -72,4 +73,16 @@ function removeDailyTrigger() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'postScheduled')
     .forEach(t => ScriptApp.deleteTrigger(t));
+}
+
+// 投稿先チャンネル（このスクリプトを実行しているアカウントの既定チャンネル）を表示
+function checkChannel() {
+  const ch = getMyChannel_();
+  const expected = getSetting_('CHANNEL_NAME');
+  const ok = ch.title === expected;
+  SpreadsheetApp.getUi().alert(
+    ok ? '✅ 投稿先チャンネルOK' : '⚠️ 投稿先チャンネルが違います',
+    `このアカウントの投稿先: ${ch.title}\n期待するチャンネル: ${expected}` +
+    (ok ? '' : '\n\nYouTubeでアカウント切替して「ぴゅあの日常」を既定にするか、チャンネルを管理するGoogleアカウントで実行してください。投稿は止めてあります。'),
+    SpreadsheetApp.getUi().ButtonSet.OK);
 }
