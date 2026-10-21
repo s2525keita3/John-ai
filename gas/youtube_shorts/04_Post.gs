@@ -18,11 +18,15 @@ function postOneNow() {
   SpreadsheetApp.getUi().alert(ok ? '✅ 1本投稿しました。「投稿ログ」を確認してください。' : '投稿できる動画（ステータス=承認）がありません。');
 }
 
-// 「承認」の先頭1件を投稿。成功時 true
+// 「承認」のうち一番古い動画を1件投稿。成功時 true
 function postNext_() {
   const sh = ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
   const data = sh.getDataRange().getValues();
-  const idx = data.findIndex((r, i) => i > 0 && r[Q.STATUS] === '承認');
+  let idx = -1;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][Q.STATUS] !== '承認') continue;
+    if (idx < 0 || new Date(data[i][Q.DATE]) < new Date(data[idx][Q.DATE])) idx = i;
+  }
   if (idx < 0) return false;
 
   // 安全装置：投稿先が「ぴゅあの日常」でなければ何もしない

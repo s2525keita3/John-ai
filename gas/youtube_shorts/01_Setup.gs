@@ -26,7 +26,7 @@ function setupShorts() {
       SOURCE_FOLDER_ID: '動画を入れるDriveフォルダのID',
       POSTED_FOLDER_NAME: '投稿済みを移すサブフォルダ名',
       FAILED_FOLDER_NAME: '投稿失敗を移すサブフォルダ名',
-      POSTS_PER_RUN: '1回の実行で投稿する本数',
+      POSTS_PER_RUN: '1回の実行で投稿する本数（ストックが多いときは2まで。1本1〜2分かかり、実行は6分で打ち切られる）',
       PRIVACY_STATUS: 'public / unlisted / private',
       TRIAL_UNLISTED_COUNT: '最初のこの本数は限定公開で投稿',
       RECRUIT_URL: '概要欄に載せる採用ページURL',

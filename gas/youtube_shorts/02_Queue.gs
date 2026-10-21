@@ -21,18 +21,32 @@ function refreshQueue() {
       f.getId(), f.getName(), mb,
       caption.title, caption.description,
       mb > maxMb ? '保留' : '未承認',
-      mb > maxMb ? `容量超過（上限 ${maxMb}MB）` : ''
+      mb > maxMb ? `容量超過（上限 ${maxMb}MB）` : '',
+      videoDate_(f)
     ]);
   }
-  // ファイル名順（日付が入っていれば古い順に）
-  rows.sort((a, b) => String(a[Q.FILENAME]).localeCompare(String(b[Q.FILENAME]), 'ja'));
+  // 古い順に並べる
+  rows.sort((a, b) => a[Q.DATE] - b[Q.DATE]);
   // ファイル名をクリックで動画が開けるリンクにする（承認時に中身を確認するため）
   for (const r of rows) {
     const url = DriveApp.getFileById(r[Q.FILE_ID]).getUrl();
     r[Q.FILENAME] = `=HYPERLINK("${url}","${String(r[Q.FILENAME]).replace(/"/g, '')}")`;
   }
-  if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, Q_HEADER.length).setValues(rows);
+  if (rows.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, Q_HEADER.length).setValues(rows);
+    // 表全体を古い順に並べ直す（あとから古い動画が追加されても順番が崩れないように）
+    if (sh.getLastRow() > 2) {
+      sh.getRange(2, 1, sh.getLastRow() - 1, Q_HEADER.length).sort({ column: Q.DATE + 1, ascending: true });
+    }
+  }
   return rows.length;
+}
+
+// 動画の日付：Drive の作成日と更新日のうち古いほう
+// （アップロードし直した動画は作成日が新しくなるが、更新日に元の日付が残ることが多い）
+function videoDate_(f) {
+  const c = f.getDateCreated(), u = f.getLastUpdated();
+  return c < u ? c : u;
 }
 
 function listVideosRecursive_(folder) {

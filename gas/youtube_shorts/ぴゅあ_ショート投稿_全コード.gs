@@ -37,9 +37,10 @@ const Q = {
   TITLE:    3,  // 空なら自動生成
   DESC:     4,  // 空なら自動生成
   STATUS:   5,  // 未承認 | 承認 | 保留 | 投稿済 | エラー（「承認」だけ投稿される）
-  NOTE:     6
+  NOTE:     6,
+  DATE:     7   // 動画の日付（Driveの作成日と更新日の古いほう）。古い順に投稿する
 };
-const Q_HEADER = ['ファイルID', 'ファイル名', 'サイズ(MB)', 'タイトル', '説明文', 'ステータス', 'メモ'];
+const Q_HEADER = ['ファイルID', 'ファイル名', 'サイズ(MB)', 'タイトル', '説明文', 'ステータス', 'メモ', '動画の日付'];
 const STATUS_LIST = ['未承認', '承認', '保留', '投稿済', 'エラー'];
 const LOG_HEADER = ['日時', 'ファイル名', '動画ID', 'URL', 'タイトル', '結果', '詳細'];
 
@@ -81,7 +82,7 @@ function setupShorts() {
       SOURCE_FOLDER_ID: '動画を入れるDriveフォルダのID',
       POSTED_FOLDER_NAME: '投稿済みを移すサブフォルダ名',
       FAILED_FOLDER_NAME: '投稿失敗を移すサブフォルダ名',
-      POSTS_PER_RUN: '1回の実行で投稿する本数',
+      POSTS_PER_RUN: '1回の実行で投稿する本数（ストックが多いときは2まで。1本1〜2分かかり、実行は6分で打ち切られる）',
       PRIVACY_STATUS: 'public / unlisted / private',
       TRIAL_UNLISTED_COUNT: '最初のこの本数は限定公開で投稿',
       RECRUIT_URL: '概要欄に載せる採用ページURL',
@@ -169,18 +170,32 @@ function refreshQueue() {
       f.getId(), f.getName(), mb,
       caption.title, caption.description,
       mb > maxMb ? '保留' : '未承認',
-      mb > maxMb ? `容量超過（上限 ${maxMb}MB）` : ''
+      mb > maxMb ? `容量超過（上限 ${maxMb}MB）` : '',
+      videoDate_(f)
     ]);
   }
-  // ファイル名順（日付が入っていれば古い順に）
-  rows.sort((a, b) => String(a[Q.FILENAME]).localeCompare(String(b[Q.FILENAME]), 'ja'));
+  // 古い順に並べる
+  rows.sort((a, b) => a[Q.DATE] - b[Q.DATE]);
   // ファイル名をクリックで動画が開けるリンクにする（承認時に中身を確認するため）
   for (const r of rows) {
     const url = DriveApp.getFileById(r[Q.FILE_ID]).getUrl();
     r[Q.FILENAME] = `=HYPERLINK("${url}","${String(r[Q.FILENAME]).replace(/"/g, '')}")`;
   }
-  if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, Q_HEADER.length).setValues(rows);
+  if (rows.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, Q_HEADER.length).setValues(rows);
+    // 表全体を古い順に並べ直す（あとから古い動画が追加されても順番が崩れないように）
+    if (sh.getLastRow() > 2) {
+      sh.getRange(2, 1, sh.getLastRow() - 1, Q_HEADER.length).sort({ column: Q.DATE + 1, ascending: true });
+    }
+  }
   return rows.length;
+}
+
+// 動画の日付：Drive の作成日と更新日のうち古いほう
+// （アップロードし直した動画は作成日が新しくなるが、更新日に元の日付が残ることが多い）
+function videoDate_(f) {
+  const c = f.getDateCreated(), u = f.getLastUpdated();
+  return c < u ? c : u;
 }
 
 function listVideosRecursive_(folder) {
@@ -294,11 +309,15 @@ function postOneNow() {
   SpreadsheetApp.getUi().alert(ok ? '✅ 1本投稿しました。「投稿ログ」を確認してください。' : '投稿できる動画（ステータス=承認）がありません。');
 }
 
-// 「承認」の先頭1件を投稿。成功時 true
+// 「承認」のうち一番古い動画を1件投稿。成功時 true
 function postNext_() {
   const sh = ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
   const data = sh.getDataRange().getValues();
-  const idx = data.findIndex((r, i) => i > 0 && r[Q.STATUS] === '承認');
+  let idx = -1;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][Q.STATUS] !== '承認') continue;
+    if (idx < 0 || new Date(data[i][Q.DATE]) < new Date(data[idx][Q.DATE])) idx = i;
+  }
   if (idx < 0) return false;
 
   // 安全装置：投稿先が「ぴゅあの日常」でなければ何もしない
