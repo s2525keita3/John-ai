@@ -25,7 +25,7 @@ const DEFAULTS = {
     '\n\n---\n' +
     '訪問看護ステーションぴゅあの、ふだんの一日を切り取ってお届けしています。\n' +
     '一緒に働く仲間を募集中です。見学も歓迎しています。\n',
-  MAX_FILE_MB:        '50',  // Apps Script のファイル上限（約50MB）
+  MAX_FILE_MB:        '500', // これを超える動画は保留（小分け送信なので大きくても可。実行時間6分に注意）
   SELF_DECLARED_MADE_FOR_KIDS: 'false'
 };
 
@@ -328,13 +328,16 @@ function postNext_() {
         selfDeclaredMadeForKids: getSetting_('SELF_DECLARED_MADE_FOR_KIDS') === 'true'
       }
     };
-    const res = YouTube.Videos.insert(resource, 'snippet,status', file.getBlob());
-    const url = `https://youtube.com/shorts/${res.id}`;
-
-    moveToSubfolder_(file, getSetting_('POSTED_FOLDER_NAME'));
+    const videoId = uploadResumable_(file, resource);
+    const url = `https://youtube.com/shorts/${videoId}`;
     sh.getRange(rowNo, Q.STATUS + 1).setValue('投稿済');
-    sh.getRange(rowNo, Q.NOTE + 1).setValue(url);
-    appendLog_([new Date(), fileName, res.id, url, title, '成功', '']);
+
+    // 投稿済みフォルダへ移動。他人がオーナーの動画は移動できないことがあるので、失敗しても投稿は成功扱い
+    let moveNote = '';
+    try { moveToSubfolder_(file, getSetting_('POSTED_FOLDER_NAME')); }
+    catch (err) { moveNote = `（フォルダ移動できず：${err.message}）`; }
+    sh.getRange(rowNo, Q.NOTE + 1).setValue(url + moveNote);
+    appendLog_([new Date(), fileName, videoId, url, title, '成功', moveNote]);
     return true;
   } catch (e) {
     sh.getRange(rowNo, Q.STATUS + 1).setValue('エラー');
@@ -360,4 +363,57 @@ function getMyChannel_() {
 function countPosted_() {
   const rows = ensureSheet_(SHORTS_SHEET.LOG, LOG_HEADER).getDataRange().getValues().slice(1);
   return rows.filter(r => r[5] === '成功').length;
+}
+
+// ---------------------------------------------------------------
+// 大きな動画も送れるよう、8MBずつ小分けにして YouTube へ送る
+// （Apps Script は一度に約50MBまでしか扱えないため）
+// ---------------------------------------------------------------
+const CHUNK = 8 * 1024 * 1024; // 256KB の倍数であること
+
+function uploadResumable_(file, resource) {
+  const token = ScriptApp.getOAuthToken();
+  const total = file.getSize();
+  const mime = file.getMimeType();
+
+  // 1) 送信の受付窓口（セッション）を作る
+  const init = UrlFetchApp.fetch(
+    'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+      method: 'post',
+      contentType: 'application/json; charset=UTF-8',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'X-Upload-Content-Length': String(total),
+        'X-Upload-Content-Type': mime
+      },
+      payload: JSON.stringify(resource),
+      muteHttpExceptions: true
+    });
+  if (init.getResponseCode() !== 200) throw new Error('アップロード開始に失敗: ' + init.getContentText());
+  const headers = init.getAllHeaders();
+  const session = headers.Location || headers.location;
+
+  // 2) Drive から8MBずつ読み、順に送る
+  for (let start = 0; start < total; start += CHUNK) {
+    const end = Math.min(start + CHUNK, total) - 1;
+    const part = UrlFetchApp.fetch(
+      `https://www.googleapis.com/drive/v3/files/${file.getId()}?alt=media&supportsAllDrives=true`, {
+        headers: { Authorization: 'Bearer ' + token, Range: `bytes=${start}-${end}` },
+        muteHttpExceptions: true
+      });
+    if (part.getResponseCode() !== 206 && part.getResponseCode() !== 200) {
+      throw new Error('Driveからの読み込みに失敗: ' + part.getResponseCode());
+    }
+    const put = UrlFetchApp.fetch(session, {
+      method: 'put',
+      contentType: mime,
+      headers: { 'Content-Range': `bytes ${start}-${end}/${total}` },
+      payload: part.getBlob().getBytes(),
+      muteHttpExceptions: true
+    });
+    const code = put.getResponseCode();
+    if (code === 200 || code === 201) return JSON.parse(put.getContentText()).id;
+    if (code !== 308) throw new Error(`送信に失敗（${code}）: ` + put.getContentText());
+  }
+  throw new Error('送信が完了しませんでした');
 }

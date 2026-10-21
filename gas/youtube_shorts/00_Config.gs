@@ -25,7 +25,7 @@ const DEFAULTS = {
     '\n\n---\n' +
     '訪問看護ステーションぴゅあの、ふだんの一日を切り取ってお届けしています。\n' +
     '一緒に働く仲間を募集中です。見学も歓迎しています。\n',
-  MAX_FILE_MB:        '50',  // Apps Script のファイル上限（約50MB）
+  MAX_FILE_MB:        '500', // これを超える動画は保留（小分け送信なので大きくても可。実行時間6分に注意）
   SELF_DECLARED_MADE_FOR_KIDS: 'false'
 };
 
