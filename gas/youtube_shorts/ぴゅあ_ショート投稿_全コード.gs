@@ -16,13 +16,15 @@ const DEFAULTS = {
   FAILED_FOLDER_NAME: '99_エラー',
   POSTS_PER_RUN:      '1',          // 1回の実行で投稿する本数
   PRIVACY_STATUS:     'public',     // public | unlisted | private
+  TRIAL_UNLISTED_COUNT: '3',        // 最初のN本は限定公開で出す（確認用）
+  RECRUIT_URL:        '',           // 概要欄に載せる採用ページURL（要確認・空なら載せない）
   CHANNEL_NAME:       'ぴゅあの日常',
   DEFAULT_TAGS:       '訪問看護,看護師,ぴゅあの日常,訪問看護ステーション,高円寺',
   HASHTAGS:           '#Shorts #訪問看護 #看護師の日常 #ぴゅあの日常',
   FOOTER:
     '\n\n---\n' +
     '訪問看護ステーションぴゅあの、ふだんの一日を切り取ってお届けしています。\n' +
-    '一緒に働く仲間を募集中です。気になった方はプロフィールのリンクからどうぞ。\n',
+    '一緒に働く仲間を募集中です。見学も歓迎しています。\n',
   MAX_FILE_MB:        '50',  // Apps Script のファイル上限（約50MB）
   SELF_DECLARED_MADE_FOR_KIDS: 'false'
 };
@@ -34,10 +36,11 @@ const Q = {
   SIZE_MB:  2,
   TITLE:    3,  // 空なら自動生成
   DESC:     4,  // 空なら自動生成
-  STATUS:   5,  // 待機 | 保留 | 投稿済 | エラー
+  STATUS:   5,  // 未承認 | 承認 | 保留 | 投稿済 | エラー（「承認」だけ投稿される）
   NOTE:     6
 };
 const Q_HEADER = ['ファイルID', 'ファイル名', 'サイズ(MB)', 'タイトル', '説明文', 'ステータス', 'メモ'];
+const STATUS_LIST = ['未承認', '承認', '保留', '投稿済', 'エラー'];
 const LOG_HEADER = ['日時', 'ファイル名', '動画ID', 'URL', 'タイトル', '結果', '詳細'];
 
 function getSetting_(key) {
@@ -80,6 +83,8 @@ function setupShorts() {
       FAILED_FOLDER_NAME: '投稿失敗を移すサブフォルダ名',
       POSTS_PER_RUN: '1回の実行で投稿する本数',
       PRIVACY_STATUS: 'public / unlisted / private',
+      TRIAL_UNLISTED_COUNT: '最初のこの本数は限定公開で投稿',
+      RECRUIT_URL: '概要欄に載せる採用ページURL',
       CHANNEL_NAME: '表示用',
       DEFAULT_TAGS: 'カンマ区切りタグ',
       HASHTAGS: '説明文末尾のハッシュタグ',
@@ -94,13 +99,16 @@ function setupShorts() {
     st.setColumnWidths(1, 3, 260);
   }
   // キュー・ログ
-  ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
+  const q = ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
+  q.getRange(2, Q.STATUS + 1, 1000, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(STATUS_LIST, true).build());
+  q.setColumnWidth(Q.TITLE + 1, 320).setColumnWidth(Q.DESC + 1, 420);
   ensureSheet_(SHORTS_SHEET.LOG, LOG_HEADER);
   // サブフォルダ
   getOrCreateSubfolder_(getSetting_('POSTED_FOLDER_NAME'));
   getOrCreateSubfolder_(getSetting_('FAILED_FOLDER_NAME'));
   refreshQueue();
-  SpreadsheetApp.getUi().alert('✅ セットアップ完了', '「投稿キュー」で文面を確認・編集できます。', SpreadsheetApp.getUi().ButtonSet.OK);
+  SpreadsheetApp.getUi().alert('✅ セットアップ完了', '「投稿キュー」で動画と文面を確認し、投稿してよいものだけステータスを「承認」にしてください。', SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 function ensureSheet_(name, header) {
@@ -160,12 +168,17 @@ function refreshQueue() {
     rows.push([
       f.getId(), f.getName(), mb,
       caption.title, caption.description,
-      mb > maxMb ? '保留' : '待機',
+      mb > maxMb ? '保留' : '未承認',
       mb > maxMb ? `容量超過（上限 ${maxMb}MB）` : ''
     ]);
   }
   // ファイル名順（日付が入っていれば古い順に）
   rows.sort((a, b) => String(a[Q.FILENAME]).localeCompare(String(b[Q.FILENAME]), 'ja'));
+  // ファイル名をクリックで動画が開けるリンクにする（承認時に中身を確認するため）
+  for (const r of rows) {
+    const url = DriveApp.getFileById(r[Q.FILE_ID]).getUrl();
+    r[Q.FILENAME] = `=HYPERLINK("${url}","${String(r[Q.FILENAME]).replace(/"/g, '')}")`;
+  }
   if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, Q_HEADER.length).setValues(rows);
   return rows.length;
 }
@@ -247,7 +260,7 @@ function buildCaption_(filename) {
     .trim();
 
   let title = theme.title;
-  if (human && human.length >= 4 && human.length <= 40 && !/^\d+$/.test(human)) {
+  if (human && human.length >= 4 && human.length <= 40 && !/^[A-Za-z0-9 ]+$/.test(human)) {
     title = `${human}｜${getSetting_('CHANNEL_NAME')}`;
   }
   // YouTubeタイトルは100文字まで。#Shorts をタイトル末尾に付ける
@@ -255,7 +268,8 @@ function buildCaption_(filename) {
 
   const description =
     theme.body + '\n' + dateNote +
-    getSetting_('FOOTER') + '\n' +
+    getSetting_('FOOTER') +
+    (getSetting_('RECRUIT_URL') ? `採用情報: ${getSetting_('RECRUIT_URL')}\n` : '') + '\n' +
     getSetting_('HASHTAGS');
 
   return { title, description };
@@ -277,14 +291,14 @@ function postScheduled() {
 function postOneNow() {
   refreshQueue();
   const ok = postNext_();
-  SpreadsheetApp.getUi().alert(ok ? '✅ 1本投稿しました。「投稿ログ」を確認してください。' : '投稿できる動画（ステータス=待機）がありません。');
+  SpreadsheetApp.getUi().alert(ok ? '✅ 1本投稿しました。「投稿ログ」を確認してください。' : '投稿できる動画（ステータス=承認）がありません。');
 }
 
-// 「待機」の先頭1件を投稿。成功時 true
+// 「承認」の先頭1件を投稿。成功時 true
 function postNext_() {
   const sh = ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
   const data = sh.getDataRange().getValues();
-  const idx = data.findIndex((r, i) => i > 0 && r[Q.STATUS] === '待機');
+  const idx = data.findIndex((r, i) => i > 0 && r[Q.STATUS] === '承認');
   if (idx < 0) return false;
 
   // 安全装置：投稿先が「ぴゅあの日常」でなければ何もしない
@@ -300,6 +314,7 @@ function postNext_() {
 
   try {
     const file = DriveApp.getFileById(fileId);
+    const fileName = file.getName();
     const auto = buildCaption_(file.getName());
     const title = String(row[Q.TITLE] || auto.title).slice(0, 100);
     const description = String(row[Q.DESC] || auto.description).slice(0, 5000);
@@ -308,7 +323,8 @@ function postNext_() {
     const resource = {
       snippet: { title, description, tags, categoryId: '22', defaultLanguage: 'ja' },
       status: {
-        privacyStatus: getSetting_('PRIVACY_STATUS'),
+        privacyStatus: countPosted_() < Number(getSetting_('TRIAL_UNLISTED_COUNT') || 0)
+          ? 'unlisted' : getSetting_('PRIVACY_STATUS'),
         selfDeclaredMadeForKids: getSetting_('SELF_DECLARED_MADE_FOR_KIDS') === 'true'
       }
     };
@@ -318,7 +334,7 @@ function postNext_() {
     moveToSubfolder_(file, getSetting_('POSTED_FOLDER_NAME'));
     sh.getRange(rowNo, Q.STATUS + 1).setValue('投稿済');
     sh.getRange(rowNo, Q.NOTE + 1).setValue(url);
-    appendLog_([new Date(), file.getName(), res.id, url, title, '成功', '']);
+    appendLog_([new Date(), fileName, res.id, url, title, '成功', '']);
     return true;
   } catch (e) {
     sh.getRange(rowNo, Q.STATUS + 1).setValue('エラー');
@@ -339,4 +355,9 @@ function getMyChannel_() {
   const res = YouTube.Channels.list('snippet', { mine: true });
   if (!res.items || !res.items.length) throw new Error('このアカウントにYouTubeチャンネルがありません');
   return { id: res.items[0].id, title: res.items[0].snippet.title };
+}
+
+function countPosted_() {
+  const rows = ensureSheet_(SHORTS_SHEET.LOG, LOG_HEADER).getDataRange().getValues().slice(1);
+  return rows.filter(r => r[5] === '成功').length;
 }

@@ -20,12 +20,17 @@ function refreshQueue() {
     rows.push([
       f.getId(), f.getName(), mb,
       caption.title, caption.description,
-      mb > maxMb ? '保留' : '待機',
+      mb > maxMb ? '保留' : '未承認',
       mb > maxMb ? `容量超過（上限 ${maxMb}MB）` : ''
     ]);
   }
   // ファイル名順（日付が入っていれば古い順に）
   rows.sort((a, b) => String(a[Q.FILENAME]).localeCompare(String(b[Q.FILENAME]), 'ja'));
+  // ファイル名をクリックで動画が開けるリンクにする（承認時に中身を確認するため）
+  for (const r of rows) {
+    const url = DriveApp.getFileById(r[Q.FILE_ID]).getUrl();
+    r[Q.FILENAME] = `=HYPERLINK("${url}","${String(r[Q.FILENAME]).replace(/"/g, '')}")`;
+  }
   if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, Q_HEADER.length).setValues(rows);
   return rows.length;
 }

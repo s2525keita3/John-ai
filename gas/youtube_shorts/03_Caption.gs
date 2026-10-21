@@ -53,7 +53,7 @@ function buildCaption_(filename) {
     .trim();
 
   let title = theme.title;
-  if (human && human.length >= 4 && human.length <= 40 && !/^\d+$/.test(human)) {
+  if (human && human.length >= 4 && human.length <= 40 && !/^[A-Za-z0-9 ]+$/.test(human)) {
     title = `${human}｜${getSetting_('CHANNEL_NAME')}`;
   }
   // YouTubeタイトルは100文字まで。#Shorts をタイトル末尾に付ける
@@ -61,7 +61,8 @@ function buildCaption_(filename) {
 
   const description =
     theme.body + '\n' + dateNote +
-    getSetting_('FOOTER') + '\n' +
+    getSetting_('FOOTER') +
+    (getSetting_('RECRUIT_URL') ? `採用情報: ${getSetting_('RECRUIT_URL')}\n` : '') + '\n' +
     getSetting_('HASHTAGS');
 
   return { title, description };

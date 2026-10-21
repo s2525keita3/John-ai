@@ -15,14 +15,14 @@ function postScheduled() {
 function postOneNow() {
   refreshQueue();
   const ok = postNext_();
-  SpreadsheetApp.getUi().alert(ok ? '✅ 1本投稿しました。「投稿ログ」を確認してください。' : '投稿できる動画（ステータス=待機）がありません。');
+  SpreadsheetApp.getUi().alert(ok ? '✅ 1本投稿しました。「投稿ログ」を確認してください。' : '投稿できる動画（ステータス=承認）がありません。');
 }
 
-// 「待機」の先頭1件を投稿。成功時 true
+// 「承認」の先頭1件を投稿。成功時 true
 function postNext_() {
   const sh = ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
   const data = sh.getDataRange().getValues();
-  const idx = data.findIndex((r, i) => i > 0 && r[Q.STATUS] === '待機');
+  const idx = data.findIndex((r, i) => i > 0 && r[Q.STATUS] === '承認');
   if (idx < 0) return false;
 
   // 安全装置：投稿先が「ぴゅあの日常」でなければ何もしない
@@ -38,6 +38,7 @@ function postNext_() {
 
   try {
     const file = DriveApp.getFileById(fileId);
+    const fileName = file.getName();
     const auto = buildCaption_(file.getName());
     const title = String(row[Q.TITLE] || auto.title).slice(0, 100);
     const description = String(row[Q.DESC] || auto.description).slice(0, 5000);
@@ -46,7 +47,8 @@ function postNext_() {
     const resource = {
       snippet: { title, description, tags, categoryId: '22', defaultLanguage: 'ja' },
       status: {
-        privacyStatus: getSetting_('PRIVACY_STATUS'),
+        privacyStatus: countPosted_() < Number(getSetting_('TRIAL_UNLISTED_COUNT') || 0)
+          ? 'unlisted' : getSetting_('PRIVACY_STATUS'),
         selfDeclaredMadeForKids: getSetting_('SELF_DECLARED_MADE_FOR_KIDS') === 'true'
       }
     };
@@ -56,7 +58,7 @@ function postNext_() {
     moveToSubfolder_(file, getSetting_('POSTED_FOLDER_NAME'));
     sh.getRange(rowNo, Q.STATUS + 1).setValue('投稿済');
     sh.getRange(rowNo, Q.NOTE + 1).setValue(url);
-    appendLog_([new Date(), file.getName(), res.id, url, title, '成功', '']);
+    appendLog_([new Date(), fileName, res.id, url, title, '成功', '']);
     return true;
   } catch (e) {
     sh.getRange(rowNo, Q.STATUS + 1).setValue('エラー');
@@ -77,4 +79,9 @@ function getMyChannel_() {
   const res = YouTube.Channels.list('snippet', { mine: true });
   if (!res.items || !res.items.length) throw new Error('このアカウントにYouTubeチャンネルがありません');
   return { id: res.items[0].id, title: res.items[0].snippet.title };
+}
+
+function countPosted_() {
+  const rows = ensureSheet_(SHORTS_SHEET.LOG, LOG_HEADER).getDataRange().getValues().slice(1);
+  return rows.filter(r => r[5] === '成功').length;
 }

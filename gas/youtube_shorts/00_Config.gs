@@ -16,13 +16,15 @@ const DEFAULTS = {
   FAILED_FOLDER_NAME: '99_エラー',
   POSTS_PER_RUN:      '1',          // 1回の実行で投稿する本数
   PRIVACY_STATUS:     'public',     // public | unlisted | private
+  TRIAL_UNLISTED_COUNT: '3',        // 最初のN本は限定公開で出す（確認用）
+  RECRUIT_URL:        '',           // 概要欄に載せる採用ページURL（要確認・空なら載せない）
   CHANNEL_NAME:       'ぴゅあの日常',
   DEFAULT_TAGS:       '訪問看護,看護師,ぴゅあの日常,訪問看護ステーション,高円寺',
   HASHTAGS:           '#Shorts #訪問看護 #看護師の日常 #ぴゅあの日常',
   FOOTER:
     '\n\n---\n' +
     '訪問看護ステーションぴゅあの、ふだんの一日を切り取ってお届けしています。\n' +
-    '一緒に働く仲間を募集中です。気になった方はプロフィールのリンクからどうぞ。\n',
+    '一緒に働く仲間を募集中です。見学も歓迎しています。\n',
   MAX_FILE_MB:        '50',  // Apps Script のファイル上限（約50MB）
   SELF_DECLARED_MADE_FOR_KIDS: 'false'
 };
@@ -34,10 +36,11 @@ const Q = {
   SIZE_MB:  2,
   TITLE:    3,  // 空なら自動生成
   DESC:     4,  // 空なら自動生成
-  STATUS:   5,  // 待機 | 保留 | 投稿済 | エラー
+  STATUS:   5,  // 未承認 | 承認 | 保留 | 投稿済 | エラー（「承認」だけ投稿される）
   NOTE:     6
 };
 const Q_HEADER = ['ファイルID', 'ファイル名', 'サイズ(MB)', 'タイトル', '説明文', 'ステータス', 'メモ'];
+const STATUS_LIST = ['未承認', '承認', '保留', '投稿済', 'エラー'];
 const LOG_HEADER = ['日時', 'ファイル名', '動画ID', 'URL', 'タイトル', '結果', '詳細'];
 
 function getSetting_(key) {

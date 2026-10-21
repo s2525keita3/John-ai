@@ -28,6 +28,8 @@ function setupShorts() {
       FAILED_FOLDER_NAME: '投稿失敗を移すサブフォルダ名',
       POSTS_PER_RUN: '1回の実行で投稿する本数',
       PRIVACY_STATUS: 'public / unlisted / private',
+      TRIAL_UNLISTED_COUNT: '最初のこの本数は限定公開で投稿',
+      RECRUIT_URL: '概要欄に載せる採用ページURL',
       CHANNEL_NAME: '表示用',
       DEFAULT_TAGS: 'カンマ区切りタグ',
       HASHTAGS: '説明文末尾のハッシュタグ',
@@ -42,13 +44,16 @@ function setupShorts() {
     st.setColumnWidths(1, 3, 260);
   }
   // キュー・ログ
-  ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
+  const q = ensureSheet_(SHORTS_SHEET.QUEUE, Q_HEADER);
+  q.getRange(2, Q.STATUS + 1, 1000, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(STATUS_LIST, true).build());
+  q.setColumnWidth(Q.TITLE + 1, 320).setColumnWidth(Q.DESC + 1, 420);
   ensureSheet_(SHORTS_SHEET.LOG, LOG_HEADER);
   // サブフォルダ
   getOrCreateSubfolder_(getSetting_('POSTED_FOLDER_NAME'));
   getOrCreateSubfolder_(getSetting_('FAILED_FOLDER_NAME'));
   refreshQueue();
-  SpreadsheetApp.getUi().alert('✅ セットアップ完了', '「投稿キュー」で文面を確認・編集できます。', SpreadsheetApp.getUi().ButtonSet.OK);
+  SpreadsheetApp.getUi().alert('✅ セットアップ完了', '「投稿キュー」で動画と文面を確認し、投稿してよいものだけステータスを「承認」にしてください。', SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 function ensureSheet_(name, header) {
