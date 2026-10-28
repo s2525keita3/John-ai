@@ -64,7 +64,7 @@ def test_memo_line_studying_is_training():
     rec = ExpenseRecord("x", "amex_csv", "f", "h", 2, date(2026, 10, 13), None, raw, normalize_vendor(raw), 53_460,
                         expense_category="雑費")
     line = memo_line(rec, 53_460).split("\t")
-    assert line == ["26/10/13", "雑費", "スタディング　東京都　千代田区", "研修費（中小企業診断士講座）", "", "53,460"]
+    assert line == ["26/10/13", "雑費", "スタディング　東京都　千代田区", "研修費", "", "53,460"]
     # 対応表に無い利用先は内容欄を空のまま
     rec.vendor_normalized = normalize_vendor("NOTTA")
     assert memo_line(rec, 14_220).split("\t")[3] == ""
