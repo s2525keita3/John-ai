@@ -52,3 +52,19 @@ def test_space_separated_line():
     # 新子安6月：タブではなく半角スペースの連続で区切られている
     d, cat, vendor, desc, amt = _parse_line("26/06/08        通信費                SMBC（フジフィルムBI）        4月　複合機プリントアウト使用料                7,217", 2026)
     assert (d, cat, vendor, amt) == (date(2026, 6, 8), "通信費", "SMBC（フジフィルムBI）", 7217)
+
+
+def test_memo_line_studying_is_training():
+    """スタディングは雑費の行に入れ、メモの内容欄で研修費とわかるようにする。"""
+    from expense_hub.models import ExpenseRecord
+    from expense_hub.pl_writer import memo_line
+    from expense_hub.vendor import normalize_vendor
+
+    raw = "スタディング　東京都　千代田区　　　　"
+    rec = ExpenseRecord("x", "amex_csv", "f", "h", 2, date(2026, 10, 13), None, raw, normalize_vendor(raw), 53_460,
+                        expense_category="雑費")
+    line = memo_line(rec, 53_460).split("\t")
+    assert line == ["26/10/13", "雑費", "スタディング　東京都　千代田区", "研修費（中小企業診断士講座）", "", "53,460"]
+    # 対応表に無い利用先は内容欄を空のまま
+    rec.vendor_normalized = normalize_vendor("NOTTA")
+    assert memo_line(rec, 14_220).split("\t")[3] == ""

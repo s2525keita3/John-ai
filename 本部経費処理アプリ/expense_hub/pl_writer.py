@@ -18,6 +18,7 @@ from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from .models import ExpenseRecord, PlMatch
 from .pl_source import PL_SPREADSHEET_ID, Grid, resolve_titles
+from .vendor import memo_content
 
 SCOPES_RW = ["https://www.googleapis.com/auth/spreadsheets"]
 
@@ -55,6 +56,7 @@ def _rc(coord: str) -> tuple[int, int]:
 def memo_line(r: ExpenseRecord, amount: int, content: str = "") -> str:
     """§3.1 の標準形：日付・科目・相手先・内容・（空）・金額。"""
     d = r.transaction_date.strftime("%y/%m/%d") if r.transaction_date else ""
+    content = content or memo_content(r.vendor_normalized)
     return "\t".join([d, r.expense_category, r.vendor_raw.strip(), content, "", f"{amount:,}"])
 
 

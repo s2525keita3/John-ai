@@ -44,6 +44,19 @@ ALIASES = {
 }
 
 
+# PLメモの「内容」欄に入れる定型文（行は雑費でも中身を残したいもの）。キーは正規化済み利用先に含まれる語
+MEMO_CONTENT = {
+    "スタディング": "研修費（中小企業診断士講座）",
+}
+
+
+def memo_content(vendor_normalized: str) -> str:
+    for key, text in MEMO_CONTENT.items():
+        if key in vendor_normalized:
+            return text
+    return ""
+
+
 def alias_words(vendor_normalized: str) -> tuple[str, ...]:
     for key, words in ALIASES.items():
         if key in vendor_normalized:
